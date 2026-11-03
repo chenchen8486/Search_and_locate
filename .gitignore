@@ -1,0 +1,49 @@
+# Visual Studio 用户配置与缓存
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.VC.opendb
+*.sdf
+*.opensdf
+ipch/
+
+# C/C++ 构建目录
+[Bb]in/
+[Oo]bj/
+x64/
+x86/
+Debug/
+Release/
+build/
+out/
+
+# C/C++ 构建产物
+*.obj
+*.o
+*.lib
+*.dll
+*.exe
+*.exp
+*.pdb
+*.ilk
+*.idb
+*.pch
+*.res
+*.aps
+*.tlog
+*.lastbuildstate
+*.log
+
+# Python 临时缓存
+__pycache__/
+*.py[cod]
+
+# 系统文件
+Thumbs.db
+Desktop.ini
+
+# 临时试验、调试与隔离工作区
+temp/
