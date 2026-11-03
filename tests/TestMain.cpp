@@ -1,10 +1,13 @@
 #include "Locator.h"
+#include "TestSupport.h"
 
 #include <exception>
 #include <iostream>
-#include <stdexcept>
 #include <string>
 #include <vector>
+
+void testThickPairs();
+void testPairingErrors();
 
 namespace {
 
@@ -12,13 +15,6 @@ struct TestCase {
     const char* name;
     void (*run)();
 };
-
-void expect(bool condition, const char* message)
-{
-    if (!condition) {
-        throw std::runtime_error(message);
-    }
-}
 
 void testConfigDefaults()
 {
@@ -63,7 +59,9 @@ void testExecuteNotInitialized()
 const TestCase tests[] = {
     { "Config.Defaults", testConfigDefaults },
     { "Image.EmptyRejected", testEmptyImageRejected },
-    { "Execute.NotInitialized", testExecuteNotInitialized }
+    { "Execute.NotInitialized", testExecuteNotInitialized },
+    { "Data.ThickPairs", testThickPairs },
+    { "Data.PairingErrors", testPairingErrors }
 };
 
 bool isCoreTest(const std::string& name)
