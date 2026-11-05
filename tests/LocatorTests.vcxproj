@@ -91,6 +91,7 @@
     <ClCompile Include="TestSupport.cpp" />
     <ClCompile Include="RealDataTests.cpp" />
     <ClCompile Include="CoreTests.cpp" />
+    <ClCompile Include="SyntheticTests.cpp" />
     <ClCompile Include="..\src\Locator.cpp" />
     <ClCompile Include="..\src\NccMatcher.cpp" />
     <ClCompile Include="..\src\ResultRefiner.cpp" />

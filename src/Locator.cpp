@@ -25,6 +25,8 @@ LocatorError Locator::initialize(const LocatorImage& model, const LocatorConfig&
         return LocatorError::BackendUnavailable;
     }
     if (config.pyramidLevels < 1 || config.maxResults < 1 ||
+        (config.subPixelResolution != 1 && config.subPixelResolution != 2 &&
+         config.subPixelResolution != 4 && config.subPixelResolution != 8) ||
         !std::isfinite(config.minScore) || config.minScore < 0.0 || config.minScore > 100.0) {
         return LocatorError::InvalidConfig;
     }

@@ -87,6 +87,7 @@ std::vector<TransformSearch::Candidate> searchPyramid(
             continue;
         }
 
+        const size_t modelBegin = candidates.size();
         for (const TransformSearch::Candidate& coarse : coarseCandidates) {
             const int maximumLeft = searchLevels[0].cols - model.image.cols;
             const int maximumTop = searchLevels[0].rows - model.image.rows;
@@ -105,6 +106,15 @@ std::vector<TransformSearch::Candidate> searchPyramid(
                 candidate.y += top;
             }
             candidates.insert(candidates.end(), refined.begin(), refined.end());
+        }
+        if (config.maxResults > 1) {
+            const std::vector<TransformSearch::Candidate> refined(
+                candidates.begin() + modelBegin, candidates.end());
+            if (ResultRefiner::selectResults(refined, config).size() <
+                static_cast<size_t>(config.maxResults)) {
+                const auto fallback = TransformSearch::searchAngles(singleModel, searchLevels[0], config);
+                candidates.insert(candidates.end(), fallback.begin(), fallback.end());
+            }
         }
     }
     return candidates;

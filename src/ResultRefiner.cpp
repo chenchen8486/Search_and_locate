@@ -5,6 +5,55 @@
 
 namespace ResultRefiner {
 
+namespace {
+
+cv::Point2d fitOffset(const cv::Mat& response, cv::Point point)
+{
+    const double center = response.at<float>(point.y, point.x);
+    const double left = response.at<float>(point.y, point.x - 1);
+    const double right = response.at<float>(point.y, point.x + 1);
+    const double top = response.at<float>(point.y - 1, point.x);
+    const double bottom = response.at<float>(point.y + 1, point.x);
+    const double gradientX = (right - left) / 2.0;
+    const double gradientY = (bottom - top) / 2.0;
+    const double curvatureX = left - 2.0 * center + right;
+    const double curvatureY = top - 2.0 * center + bottom;
+    const double cross = (response.at<float>(point.y + 1, point.x + 1) -
+                          response.at<float>(point.y - 1, point.x + 1) -
+                          response.at<float>(point.y + 1, point.x - 1) +
+                          response.at<float>(point.y - 1, point.x - 1)) / 4.0;
+    const double determinant = curvatureX * curvatureY - cross * cross;
+    if (curvatureX >= -1e-12 || curvatureY >= -1e-12 || determinant <= 1e-12) {
+        return cv::Point2d(0.0, 0.0);
+    }
+    const double offsetX = (-gradientX * curvatureY + gradientY * cross) / determinant;
+    const double offsetY = (-gradientY * curvatureX + gradientX * cross) / determinant;
+    if (!std::isfinite(offsetX) || !std::isfinite(offsetY)) {
+        return cv::Point2d(0.0, 0.0);
+    }
+    return cv::Point2d(std::max(-0.5, std::min(0.5, offsetX)),
+                       std::max(-0.5, std::min(0.5, offsetY)));
+}
+
+} // namespace
+
+cv::Point2d refineSubPixel(const cv::Mat& response, cv::Point bestPoint, int resolution)
+{
+    if (resolution != 1 && resolution != 2 && resolution != 4 && resolution != 8) {
+        throw std::invalid_argument("亚像素仅支持 1、2、4、8 档");
+    }
+    const cv::Point2d integerPoint(bestPoint.x, bestPoint.y);
+    if (response.empty() || response.type() != CV_32FC1 || bestPoint.x <= 0 || bestPoint.y <= 0 ||
+        bestPoint.x >= response.cols - 1 || bestPoint.y >= response.rows - 1) {
+        return integerPoint;
+    }
+
+    const cv::Point2d offset = fitOffset(response, bestPoint);
+    return cv::Point2d(
+        bestPoint.x + std::floor(offset.x * resolution + 0.5) / resolution,
+        bestPoint.y + std::floor(offset.y * resolution + 0.5) / resolution);
+}
+
 std::vector<LocatorResult> selectResults(const std::vector<LocatorResult>& candidates,
                                          const LocatorConfig& config)
 {

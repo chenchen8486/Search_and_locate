@@ -25,6 +25,9 @@ void testTransformInvalidBounds();
 void testPyramidInvalidLevel();
 void testPyramidEquivalentResult();
 void testPyramidKeepsRequestedRange();
+void testSubPixelKnownShift();
+void testSubPixelBorderFallback();
+void testSyntheticFixedSeed100();
 
 namespace {
 
@@ -95,7 +98,10 @@ const TestCase tests[] = {
     { "Transform.InvalidBounds", testTransformInvalidBounds },
     { "Pyramid.InvalidLevel", testPyramidInvalidLevel },
     { "Pyramid.EquivalentResult", testPyramidEquivalentResult },
-    { "Pyramid.KeepsRequestedRange", testPyramidKeepsRequestedRange }
+    { "Pyramid.KeepsRequestedRange", testPyramidKeepsRequestedRange },
+    { "SubPixel.KnownShift", testSubPixelKnownShift },
+    { "SubPixel.BorderFallback", testSubPixelBorderFallback },
+    { "Synthetic.FixedSeed100", testSyntheticFixedSeed100 }
 };
 
 bool isCoreTest(const std::string& name)
@@ -109,7 +115,8 @@ bool isCoreTest(const std::string& name)
            name == "Angle.RecoverKnownAngle" || name == "Scale.Sequence" ||
            name == "Scale.RecoverKnownScale" || name == "Transform.CombinedSearch" ||
            name == "Transform.InvalidBounds" || name == "Pyramid.InvalidLevel" ||
-           name == "Pyramid.EquivalentResult" || name == "Pyramid.KeepsRequestedRange";
+           name == "Pyramid.EquivalentResult" || name == "Pyramid.KeepsRequestedRange" ||
+           name == "SubPixel.KnownShift" || name == "SubPixel.BorderFallback";
 }
 
 bool shouldRun(const TestCase& test, const std::string& mode, const std::string& value)
@@ -122,6 +129,9 @@ bool shouldRun(const TestCase& test, const std::string& mode, const std::string&
     }
     if (value == "core") {
         return isCoreTest(test.name);
+    }
+    if (value == "synthetic") {
+        return test.name == std::string("Synthetic.FixedSeed100");
     }
     return false;
 }
@@ -136,7 +146,7 @@ int main(int argc, char* argv[])
         mode = argv[1];
         value = argv[2];
     } else if (argc != 1) {
-        std::cerr << "用法：LocatorTests [--test <测试名> | --suite <core|all|performance|gpu>]\n";
+        std::cerr << "用法：LocatorTests [--test <测试名> | --suite <core|synthetic|all|performance|gpu>]\n";
         return 2;
     }
 
