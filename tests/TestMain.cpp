@@ -8,6 +8,9 @@
 
 void testThickPairs();
 void testPairingErrors();
+void testNccExactLocation();
+void testNccPaddedStride();
+void testNccConstantInput();
 
 namespace {
 
@@ -61,13 +64,17 @@ const TestCase tests[] = {
     { "Image.EmptyRejected", testEmptyImageRejected },
     { "Execute.NotInitialized", testExecuteNotInitialized },
     { "Data.ThickPairs", testThickPairs },
-    { "Data.PairingErrors", testPairingErrors }
+    { "Data.PairingErrors", testPairingErrors },
+    { "Ncc.ExactLocation", testNccExactLocation },
+    { "Ncc.PaddedStride", testNccPaddedStride },
+    { "Ncc.ConstantInput", testNccConstantInput }
 };
 
 bool isCoreTest(const std::string& name)
 {
     return name == "Config.Defaults" || name == "Image.EmptyRejected" ||
-           name == "Execute.NotInitialized";
+           name == "Execute.NotInitialized" || name == "Ncc.ExactLocation" ||
+           name == "Ncc.PaddedStride" || name == "Ncc.ConstantInput";
 }
 
 bool shouldRun(const TestCase& test, const std::string& mode, const std::string& value)
