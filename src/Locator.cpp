@@ -38,7 +38,7 @@ LocatorError Locator::initialize(const LocatorImage& model, const LocatorConfig&
 
     std::vector<TransformSearch::TransformModel> models;
     try {
-        models = TransformSearch::makeAngleModels(modelView, config);
+        models = TransformSearch::makeTransformModels(modelView, config);
     } catch (const std::invalid_argument&) {
         return LocatorError::InvalidConfig;
     }
@@ -80,6 +80,11 @@ LocatorError Locator::execute(const LocatorImage& search,
 
     if (state_->model.cols > searchView.cols || state_->model.rows > searchView.rows) {
         return LocatorError::InvalidImage;
+    }
+    for (const TransformSearch::TransformModel& model : state_->models) {
+        if (model.image.cols > searchView.cols || model.image.rows > searchView.rows) {
+            return state_->config.useRoi ? LocatorError::InvalidRoi : LocatorError::InvalidImage;
+        }
     }
 
     std::vector<LocatorResult> candidates =

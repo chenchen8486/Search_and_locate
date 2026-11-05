@@ -299,3 +299,153 @@ void testAngleRecoverKnownAngle()
                "旋转目标中心 y 错误");
     expect(results[0].score > 99.9, "已知旋转目标分数应大于 99.9");
 }
+
+void testScaleSequence()
+{
+    LocatorConfig config;
+    config.scaleMin = 0.9;
+    config.scaleMax = 1.1;
+    config.scaleStep = 0.02;
+    const std::vector<double> scales = TransformSearch::generateScales(config);
+    expect(scales.size() == 11, "0.9～1.1、步长 0.02 应生成 11 个尺度");
+    expectNear(scales.front(), 0.9, 1e-9, "尺度最小值错误");
+    expectNear(scales.back(), 1.1, 1e-9, "尺度最大值错误");
+    for (size_t i = 1; i < scales.size(); ++i) {
+        expect(scales[i] > scales[i - 1], "尺度序列不得重复或倒退");
+    }
+
+    config.scaleMax = 1.115;
+    const std::vector<double> nonDivisible = TransformSearch::generateScales(config);
+    expect(nonDivisible.size() == 11 && nonDivisible.back() <= 1.115,
+           "不能整除尺度步长时不得越界或死循环");
+
+    const auto expectInvalid = [](const LocatorConfig& invalid) {
+        bool rejected = false;
+        try {
+            TransformSearch::generateScales(invalid);
+        } catch (...) {
+            rejected = true;
+        }
+        expect(rejected, "非法尺度范围、步长或非正值应被拒绝");
+    };
+    LocatorConfig invalid;
+    invalid.scaleStep = 0.0;
+    expectInvalid(invalid);
+    invalid.scaleStep = -1.0;
+    expectInvalid(invalid);
+    invalid.scaleStep = 0.01;
+    invalid.scaleMin = 1.2;
+    invalid.scaleMax = 0.8;
+    expectInvalid(invalid);
+    invalid.scaleMin = 0.0;
+    invalid.scaleMax = 1.0;
+    expectInvalid(invalid);
+    invalid.scaleMin = std::numeric_limits<double>::quiet_NaN();
+    expectInvalid(invalid);
+    invalid.scaleMin = 1.0;
+    invalid.scaleStep = std::numeric_limits<double>::infinity();
+    expectInvalid(invalid);
+}
+
+void testScaleRecoverKnownScale()
+{
+    cv::Mat model = makeTexturedImage(24, 16, 1357);
+    LocatorConfig scaledConfig;
+    scaledConfig.scaleMin = 1.2;
+    scaledConfig.scaleMax = 1.2;
+    const auto scaledModels = TransformSearch::makeTransformModels(model, scaledConfig);
+    const cv::Mat& scaled = scaledModels[0].image;
+
+    cv::Mat search = makeTexturedImage(100, 90, 1358);
+    const cv::Point topLeft(25, 30);
+    scaled.copyTo(search(cv::Rect(topLeft.x, topLeft.y, scaled.cols, scaled.rows)));
+
+    LocatorConfig config;
+    config.scaleMin = 0.9;
+    config.scaleMax = 1.3;
+    config.scaleStep = 0.1;
+    config.minScore = 99.0;
+    Locator locator;
+    expect(locator.initialize(asLocatorImage(model), config) == LocatorError::Ok,
+           "多尺度模板初始化失败");
+    std::vector<LocatorResult> results;
+    expect(locator.execute(asLocatorImage(search), results) == LocatorError::Ok,
+           "多尺度搜索执行失败");
+    expect(results.size() == 1, "已知缩放目标应返回一个结果");
+    expectNear(results[0].scale, 1.2, 1e-9, "恢复尺度错误");
+    expectNear(results[0].x, topLeft.x + (scaled.cols - 1) / 2.0, 1e-9,
+               "缩放目标中心 x 错误");
+    expectNear(results[0].y, topLeft.y + (scaled.rows - 1) / 2.0, 1e-9,
+               "缩放目标中心 y 错误");
+    expect(results[0].score > 99.9, "已知缩放目标分数应大于 99.9");
+}
+
+void testTransformCombinedSearch()
+{
+    cv::Mat model = makeTexturedImage(20, 14, 9753);
+    LocatorConfig transformedConfig;
+    transformedConfig.angleMinDeg = 15.0;
+    transformedConfig.angleMaxDeg = 15.0;
+    transformedConfig.scaleMin = 0.85;
+    transformedConfig.scaleMax = 0.85;
+    const auto transformedModels = TransformSearch::makeTransformModels(model, transformedConfig);
+    const cv::Mat& transformed = transformedModels[0].image;
+
+    cv::Mat search = makeTexturedImage(100, 90, 9754);
+    const cv::Point topLeft(40, 35);
+    transformed.copyTo(search(cv::Rect(topLeft.x, topLeft.y, transformed.cols, transformed.rows)));
+
+    LocatorConfig config;
+    config.angleMinDeg = -15.0;
+    config.angleMaxDeg = 15.0;
+    config.angleStepDeg = 15.0;
+    config.scaleMin = 0.85;
+    config.scaleMax = 0.95;
+    config.scaleStep = 0.05;
+    config.minScore = 99.0;
+    Locator locator;
+    expect(locator.initialize(asLocatorImage(model), config) == LocatorError::Ok,
+           "角度尺度组合初始化失败");
+    std::vector<LocatorResult> results;
+    expect(locator.execute(asLocatorImage(search), results) == LocatorError::Ok,
+           "角度尺度组合搜索失败");
+    expect(results.size() == 1, "组合目标应返回一个最佳结果");
+    expectNear(results[0].angle, 15.0, 1e-9, "组合候选角度错误");
+    expectNear(results[0].scale, 0.85, 1e-9, "组合候选尺度错误");
+    expectNear(results[0].x, topLeft.x + (transformed.cols - 1) / 2.0, 1e-9,
+               "组合候选中心 x 错误");
+    expectNear(results[0].y, topLeft.y + (transformed.rows - 1) / 2.0, 1e-9,
+               "组合候选中心 y 错误");
+}
+
+void testTransformInvalidBounds()
+{
+    cv::Mat model = makeTexturedImage(24, 16, 8642);
+    LocatorConfig tinyConfig;
+    tinyConfig.scaleMin = 0.001;
+    tinyConfig.scaleMax = 0.001;
+    Locator tinyLocator;
+    expect(tinyLocator.initialize(asLocatorImage(model), tinyConfig) == LocatorError::InvalidConfig,
+           "缩放后空模板应返回 InvalidConfig");
+
+    cv::Mat smallSearch = makeTexturedImage(50, 50, 8643);
+    LocatorConfig largeConfig;
+    largeConfig.scaleMin = 4.0;
+    largeConfig.scaleMax = 4.0;
+    Locator largeLocator;
+    expect(largeLocator.initialize(asLocatorImage(model), largeConfig) == LocatorError::Ok,
+           "放大模板初始化失败");
+    std::vector<LocatorResult> results;
+    expect(largeLocator.execute(asLocatorImage(smallSearch), results) == LocatorError::InvalidImage,
+           "变换后模板大于搜索图应返回 InvalidImage");
+
+    cv::Mat largeSearch = makeTexturedImage(100, 90, 8644);
+    LocatorConfig roiConfig = largeConfig;
+    roiConfig.useRoi = true;
+    roiConfig.roi = { 0, 0, 60, 60 };
+    Locator roiLocator;
+    expect(roiLocator.initialize(asLocatorImage(model), roiConfig) == LocatorError::Ok,
+           "ROI 放大模板初始化失败");
+    expect(roiLocator.execute(asLocatorImage(largeSearch), results) == LocatorError::InvalidRoi,
+           "变换后模板大于 ROI 应返回 InvalidRoi");
+}

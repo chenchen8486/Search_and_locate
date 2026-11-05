@@ -18,6 +18,10 @@ void testVicinitySuppressesDuplicates();
 void testAngleSequence();
 void testAngleClockwise();
 void testAngleRecoverKnownAngle();
+void testScaleSequence();
+void testScaleRecoverKnownScale();
+void testTransformCombinedSearch();
+void testTransformInvalidBounds();
 
 namespace {
 
@@ -81,7 +85,11 @@ const TestCase tests[] = {
     { "Vicinity.SuppressesDuplicates", testVicinitySuppressesDuplicates },
     { "Angle.Sequence", testAngleSequence },
     { "Angle.Clockwise", testAngleClockwise },
-    { "Angle.RecoverKnownAngle", testAngleRecoverKnownAngle }
+    { "Angle.RecoverKnownAngle", testAngleRecoverKnownAngle },
+    { "Scale.Sequence", testScaleSequence },
+    { "Scale.RecoverKnownScale", testScaleRecoverKnownScale },
+    { "Transform.CombinedSearch", testTransformCombinedSearch },
+    { "Transform.InvalidBounds", testTransformInvalidBounds }
 };
 
 bool isCoreTest(const std::string& name)
@@ -92,7 +100,9 @@ bool isCoreTest(const std::string& name)
            name == "Roi.RestrictsSearch" || name == "Roi.InvalidRejected" ||
            name == "TopN.ScoreAndStableOrder" || name == "Vicinity.SuppressesDuplicates" ||
            name == "Angle.Sequence" || name == "Angle.Clockwise" ||
-           name == "Angle.RecoverKnownAngle";
+           name == "Angle.RecoverKnownAngle" || name == "Scale.Sequence" ||
+           name == "Scale.RecoverKnownScale" || name == "Transform.CombinedSearch" ||
+           name == "Transform.InvalidBounds";
 }
 
 bool shouldRun(const TestCase& test, const std::string& mode, const std::string& value)
