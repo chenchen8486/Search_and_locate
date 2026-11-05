@@ -11,6 +11,7 @@ struct TransformModel {
     cv::Mat image;
     double angle;
     double scale;
+    std::vector<cv::Mat> pyramid;
 };
 
 using Candidate = LocatorResult;

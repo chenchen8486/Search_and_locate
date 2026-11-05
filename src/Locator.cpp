@@ -1,5 +1,6 @@
 #include "Locator.h"
 #include "LocatorInternal.h"
+#include "PyramidSearch.h"
 #include "ResultRefiner.h"
 #include "TransformSearch.h"
 
@@ -23,8 +24,8 @@ LocatorError Locator::initialize(const LocatorImage& model, const LocatorConfig&
     if (config.backend != LocatorBackend::Cpu) {
         return LocatorError::BackendUnavailable;
     }
-    if (config.maxResults < 1 || !std::isfinite(config.minScore) ||
-        config.minScore < 0.0 || config.minScore > 100.0) {
+    if (config.pyramidLevels < 1 || config.maxResults < 1 ||
+        !std::isfinite(config.minScore) || config.minScore < 0.0 || config.minScore > 100.0) {
         return LocatorError::InvalidConfig;
     }
 
@@ -39,6 +40,12 @@ LocatorError Locator::initialize(const LocatorImage& model, const LocatorConfig&
     std::vector<TransformSearch::TransformModel> models;
     try {
         models = TransformSearch::makeTransformModels(modelView, config);
+        if (config.pyramidLevels > 1) {
+            for (TransformSearch::TransformModel& transformed : models) {
+                transformed.pyramid = PyramidSearch::buildPyramids(transformed.image,
+                                                                     config.pyramidLevels);
+            }
+        }
     } catch (const std::invalid_argument&) {
         return LocatorError::InvalidConfig;
     }
@@ -87,8 +94,18 @@ LocatorError Locator::execute(const LocatorImage& search,
         }
     }
 
-    std::vector<LocatorResult> candidates =
-        TransformSearch::searchAngles(state_->models, searchView, state_->config);
+    std::vector<LocatorResult> candidates;
+    try {
+        if (state_->config.pyramidLevels == 1) {
+            candidates = TransformSearch::searchAngles(state_->models, searchView, state_->config);
+        } else {
+            const auto searchLevels = PyramidSearch::buildPyramids(searchView,
+                                                                    state_->config.pyramidLevels);
+            candidates = PyramidSearch::searchPyramid(state_->models, searchLevels, state_->config);
+        }
+    } catch (const std::invalid_argument&) {
+        return LocatorError::InvalidConfig;
+    }
     for (LocatorResult& candidate : candidates) {
         candidate.x += offset.x;
         candidate.y += offset.y;

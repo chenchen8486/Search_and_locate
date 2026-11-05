@@ -92,6 +92,7 @@
     <ClCompile Include="..\src\NccMatcher.cpp" />
     <ClCompile Include="..\src\ResultRefiner.cpp" />
     <ClCompile Include="..\src\TransformSearch.cpp" />
+    <ClCompile Include="..\src\PyramidSearch.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets" />

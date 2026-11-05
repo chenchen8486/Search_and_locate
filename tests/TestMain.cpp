@@ -22,6 +22,9 @@ void testScaleSequence();
 void testScaleRecoverKnownScale();
 void testTransformCombinedSearch();
 void testTransformInvalidBounds();
+void testPyramidInvalidLevel();
+void testPyramidEquivalentResult();
+void testPyramidKeepsRequestedRange();
 
 namespace {
 
@@ -89,7 +92,10 @@ const TestCase tests[] = {
     { "Scale.Sequence", testScaleSequence },
     { "Scale.RecoverKnownScale", testScaleRecoverKnownScale },
     { "Transform.CombinedSearch", testTransformCombinedSearch },
-    { "Transform.InvalidBounds", testTransformInvalidBounds }
+    { "Transform.InvalidBounds", testTransformInvalidBounds },
+    { "Pyramid.InvalidLevel", testPyramidInvalidLevel },
+    { "Pyramid.EquivalentResult", testPyramidEquivalentResult },
+    { "Pyramid.KeepsRequestedRange", testPyramidKeepsRequestedRange }
 };
 
 bool isCoreTest(const std::string& name)
@@ -102,7 +108,8 @@ bool isCoreTest(const std::string& name)
            name == "Angle.Sequence" || name == "Angle.Clockwise" ||
            name == "Angle.RecoverKnownAngle" || name == "Scale.Sequence" ||
            name == "Scale.RecoverKnownScale" || name == "Transform.CombinedSearch" ||
-           name == "Transform.InvalidBounds";
+           name == "Transform.InvalidBounds" || name == "Pyramid.InvalidLevel" ||
+           name == "Pyramid.EquivalentResult" || name == "Pyramid.KeepsRequestedRange";
 }
 
 bool shouldRun(const TestCase& test, const std::string& mode, const std::string& value)

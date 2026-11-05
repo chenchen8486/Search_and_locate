@@ -1,11 +1,15 @@
 #include "Locator.h"
 #include "NccMatcher.h"
+#include "PyramidSearch.h"
 #include "ResultRefiner.h"
 #include "TransformSearch.h"
 #include "TestSupport.h"
 
 #include <opencv2/core.hpp>
 
+#include <algorithm>
+#include <chrono>
+#include <iostream>
 #include <limits>
 #include <vector>
 
@@ -448,4 +452,116 @@ void testTransformInvalidBounds()
            "ROI 放大模板初始化失败");
     expect(roiLocator.execute(asLocatorImage(largeSearch), results) == LocatorError::InvalidRoi,
            "变换后模板大于 ROI 应返回 InvalidRoi");
+}
+
+void testPyramidInvalidLevel()
+{
+    cv::Mat model = makeTexturedImage(24, 18, 1122);
+    LocatorConfig config;
+    config.pyramidLevels = 0;
+    Locator locator;
+    expect(locator.initialize(asLocatorImage(model), config) == LocatorError::InvalidConfig,
+           "金字塔层数 0 应返回 InvalidConfig");
+
+    config.pyramidLevels = -1;
+    expect(locator.initialize(asLocatorImage(model), config) == LocatorError::InvalidConfig,
+           "负金字塔层数应返回 InvalidConfig");
+
+    config.pyramidLevels = 10;
+    expect(locator.initialize(asLocatorImage(model), config) == LocatorError::InvalidConfig,
+           "超过模板实际可计算层数应返回 InvalidConfig");
+}
+
+void testPyramidEquivalentResult()
+{
+    cv::Mat model = makeTexturedImage(48, 40, 1123);
+    cv::Mat search = makeTexturedImage(512, 512, 1124);
+    const cv::Point topLeft(200, 180);
+    model.copyTo(search(cv::Rect(topLeft.x, topLeft.y, model.cols, model.rows)));
+
+    const auto pyramid = PyramidSearch::buildPyramids(search, 3);
+    expect(pyramid.size() == 3, "请求三层时应建立三层图像");
+    expect(pyramid[0].cols == 512 && pyramid[0].rows == 512, "金字塔第 0 层应为原图");
+    expect(pyramid[1].cols == 256 && pyramid[1].rows == 256, "金字塔第 1 层尺寸应减半");
+    expect(pyramid[2].cols == 128 && pyramid[2].rows == 128, "金字塔第 2 层应按 2 倍继续缩小");
+
+    LocatorConfig oneConfig;
+    oneConfig.minScore = 99.0;
+    oneConfig.pyramidLevels = 1;
+    Locator oneLayer;
+    expect(oneLayer.initialize(asLocatorImage(model), oneConfig) == LocatorError::Ok,
+           "单层模板初始化失败");
+    std::vector<LocatorResult> oneResults;
+    expect(oneLayer.execute(asLocatorImage(search), oneResults) == LocatorError::Ok,
+           "单层搜索失败");
+
+    LocatorConfig threeConfig = oneConfig;
+    threeConfig.pyramidLevels = 3;
+    Locator threeLayers;
+    expect(threeLayers.initialize(asLocatorImage(model), threeConfig) == LocatorError::Ok,
+           "三层模板初始化失败");
+    std::vector<LocatorResult> threeResults;
+    expect(threeLayers.execute(asLocatorImage(search), threeResults) == LocatorError::Ok,
+           "三层搜索失败");
+
+    expect(oneResults.size() == 1 && threeResults.size() == 1, "单层和三层都应找回真目标");
+    expectNear(threeResults[0].x, oneResults[0].x, 1e-9, "三层结果 x 与单层不一致");
+    expectNear(threeResults[0].y, oneResults[0].y, 1e-9, "三层结果 y 与单层不一致");
+    expectNear(threeResults[0].score, oneResults[0].score, 0.1, "三层分数与单层差异异常");
+
+    const auto measure = [&](Locator& locator, std::vector<LocatorResult>& results) {
+        std::vector<double> samples;
+        for (int i = 0; i < 30; ++i) {
+            const auto start = std::chrono::steady_clock::now();
+            expect(locator.execute(asLocatorImage(search), results) == LocatorError::Ok,
+                   "金字塔重复计时执行失败");
+            samples.push_back(std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - start).count());
+        }
+        std::sort(samples.begin(), samples.end());
+        return samples[samples.size() / 2];
+    };
+    const double oneMs = measure(oneLayer, oneResults);
+    const double threeMs = measure(threeLayers, threeResults);
+    std::cout << "金字塔 30 次中位数：1 层 " << oneMs << " ms，3 层 " << threeMs << " ms\n";
+}
+
+void testPyramidKeepsRequestedRange()
+{
+    cv::Mat model = makeTexturedImage(20, 14, 1125);
+    LocatorConfig transformedConfig;
+    transformedConfig.angleMinDeg = 15.0;
+    transformedConfig.angleMaxDeg = 15.0;
+    transformedConfig.scaleMin = 0.85;
+    transformedConfig.scaleMax = 0.85;
+    const auto transformedModels = TransformSearch::makeTransformModels(model, transformedConfig);
+    const cv::Mat& transformed = transformedModels[0].image;
+
+    cv::Mat search = makeTexturedImage(100, 90, 1126);
+    const cv::Point topLeft(40, 35);
+    transformed.copyTo(search(cv::Rect(topLeft.x, topLeft.y, transformed.cols, transformed.rows)));
+
+    LocatorConfig config;
+    config.angleMinDeg = -15.0;
+    config.angleMaxDeg = 15.0;
+    config.angleStepDeg = 15.0;
+    config.scaleMin = 0.85;
+    config.scaleMax = 0.95;
+    config.scaleStep = 0.05;
+    config.minScore = 99.0;
+    config.pyramidLevels = 3;
+    Locator locator;
+    expect(locator.initialize(asLocatorImage(model), config) == LocatorError::Ok,
+           "金字塔组合模板初始化失败");
+    std::vector<LocatorResult> results;
+    expect(locator.execute(asLocatorImage(search), results) == LocatorError::Ok,
+           "金字塔组合搜索失败");
+    expect(results.size() == 1, "金字塔组合目标应返回一个结果");
+    expectNear(results[0].angle, 15.0, 1e-9, "金字塔裁减了请求的角度范围");
+    expectNear(results[0].scale, 0.85, 1e-9, "金字塔裁减了请求的尺度范围");
+    expectNear(results[0].x, topLeft.x + (transformed.cols - 1) / 2.0, 1e-9,
+               "金字塔组合结果中心 x 错误");
+    expectNear(results[0].y, topLeft.y + (transformed.rows - 1) / 2.0, 1e-9,
+               "金字塔组合结果中心 y 错误");
+    expect(results[0].score > 99.9, "金字塔精化后分数应大于 99.9");
 }
