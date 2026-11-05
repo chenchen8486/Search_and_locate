@@ -6,6 +6,7 @@
 #include "TestSupport.h"
 
 #include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -41,6 +42,20 @@ void testNccExactLocation()
     expect(results[0].angle == 0.0 && results[0].scale == 1.0,
            "固定搜索应返回角度 0、尺度 1");
     expect(results[0].score > 99.9, "精确匹配分数应大于 99.9");
+}
+
+void testNccSameSizeScore()
+{
+    cv::Mat model = makeTexturedImage(16, 12, 13001);
+    cv::Mat padded(12, 24, CV_8UC1, cv::Scalar(0));
+    model.copyTo(padded(cv::Rect(0, 0, model.cols, model.rows)));
+    const cv::Mat nonContinuous = padded(cv::Rect(0, 0, model.cols, model.rows));
+    const float reference = NccMatcher::match(model, model).at<float>(0, 0);
+    expectNear(NccMatcher::scoreSameSize(nonContinuous, model), reference, 1e-6,
+               "单点 NCC 应与 OpenCV 同尺寸结果一致并支持非连续行");
+    cv::Mat constant(model.size(), CV_8UC1, cv::Scalar(127));
+    expectNear(NccMatcher::scoreSameSize(constant, model), 0.0, 1e-12,
+               "零方差单点 NCC 必须返回 0");
 }
 
 void testNccPaddedStride()
@@ -564,4 +579,29 @@ void testPyramidKeepsRequestedRange()
     expectNear(results[0].y, topLeft.y + (transformed.rows - 1) / 2.0, 1e-9,
                "金字塔组合结果中心 y 错误");
     expect(results[0].score > 99.9, "金字塔精化后分数应大于 99.9");
+}
+
+
+void testTransformLinearShift()
+{
+    cv::Mat model = makeTexturedImage(9, 7, 14001);
+    const int resolutions[] = { 1, 2, 4, 8 };
+    for (int resolution : resolutions) {
+        const int half = resolution > 1 ? resolution / 2 : 0;
+        for (int y = -half; y <= half; ++y) {
+            for (int x = -half; x <= half; ++x) {
+                const double offsetX = static_cast<double>(x) / resolution;
+                const double offsetY = static_cast<double>(y) / resolution;
+                const cv::Mat shift = (cv::Mat_<double>(2, 3) <<
+                    1.0, 0.0, offsetX, 0.0, 1.0, offsetY);
+                cv::Mat expected;
+                cv::warpAffine(model, expected, shift, model.size(),
+                               cv::INTER_LINEAR, cv::BORDER_REPLICATE);
+                const cv::Mat actual = TransformSearch::translateLinear(model, offsetX, offsetY);
+                expect(!actual.empty() && cv::norm(actual, expected, cv::NORM_INF) == 0.0,
+                       "直接线性平移与 OpenCV 不一致，偏移 " + std::to_string(offsetX) +
+                       "，" + std::to_string(offsetY));
+            }
+        }
+    }
 }

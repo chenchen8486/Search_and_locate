@@ -145,8 +145,10 @@ void testRealDataAll197()
         expect(results[i].error == LocatorError::Ok && results[i].matches.size() == 1,
                "真实数据任务 " + std::to_string(results[i].id) + " 未返回唯一结果");
         const LocatorResult& match = results[i].matches[0];
-        expectNear(match.x, std::stod(values[1]), 1e-9, "真实数据 x 回归不一致");
-        expectNear(match.y, std::stod(values[2]), 1e-9, "真实数据 y 回归不一致");
+        expectNear(match.x, std::stod(values[1]), 1e-9,
+                   "真实数据任务 " + std::to_string(results[i].id) + " x 回归不一致");
+        expectNear(match.y, std::stod(values[2]), 1e-9,
+                   "真实数据任务 " + std::to_string(results[i].id) + " y 回归不一致");
         expectNear(match.angle, std::stod(values[3]), 1e-9, "真实数据角度回归不一致");
         expectNear(match.scale, std::stod(values[4]), 1e-9, "真实数据尺度回归不一致");
         expectNear(match.score, std::stod(values[5]), 1e-6, "真实数据分数回归不一致");

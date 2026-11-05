@@ -9,6 +9,7 @@
 void testThickPairs();
 void testPairingErrors();
 void testNccExactLocation();
+void testNccSameSizeScore();
 void testNccPaddedStride();
 void testNccConstantInput();
 void testRoiRestrictsSearch();
@@ -22,6 +23,7 @@ void testScaleSequence();
 void testScaleRecoverKnownScale();
 void testTransformCombinedSearch();
 void testTransformInvalidBounds();
+void testTransformLinearShift();
 void testPyramidInvalidLevel();
 void testPyramidEquivalentResult();
 void testPyramidKeepsRequestedRange();
@@ -89,6 +91,7 @@ const TestCase tests[] = {
     { "Data.ThickPairs", testThickPairs },
     { "Data.PairingErrors", testPairingErrors },
     { "Ncc.ExactLocation", testNccExactLocation },
+    { "Ncc.SameSizeScore", testNccSameSizeScore },
     { "Ncc.PaddedStride", testNccPaddedStride },
     { "Ncc.ConstantInput", testNccConstantInput },
     { "Roi.RestrictsSearch", testRoiRestrictsSearch },
@@ -102,6 +105,7 @@ const TestCase tests[] = {
     { "Scale.RecoverKnownScale", testScaleRecoverKnownScale },
     { "Transform.CombinedSearch", testTransformCombinedSearch },
     { "Transform.InvalidBounds", testTransformInvalidBounds },
+    { "Transform.LinearShift", testTransformLinearShift },
     { "Pyramid.InvalidLevel", testPyramidInvalidLevel },
     { "Pyramid.EquivalentResult", testPyramidEquivalentResult },
     { "Pyramid.KeepsRequestedRange", testPyramidKeepsRequestedRange },
@@ -119,13 +123,14 @@ bool isCoreTest(const std::string& name)
 {
     return name == "Config.Defaults" || name == "Image.EmptyRejected" ||
            name == "Execute.NotInitialized" || name == "Ncc.ExactLocation" ||
-           name == "Ncc.PaddedStride" || name == "Ncc.ConstantInput" ||
+           name == "Ncc.SameSizeScore" || name == "Ncc.PaddedStride" || name == "Ncc.ConstantInput" ||
            name == "Roi.RestrictsSearch" || name == "Roi.InvalidRejected" ||
            name == "TopN.ScoreAndStableOrder" || name == "Vicinity.SuppressesDuplicates" ||
            name == "Angle.Sequence" || name == "Angle.Clockwise" ||
            name == "Angle.RecoverKnownAngle" || name == "Scale.Sequence" ||
            name == "Scale.RecoverKnownScale" || name == "Transform.CombinedSearch" ||
-           name == "Transform.InvalidBounds" || name == "Pyramid.InvalidLevel" ||
+           name == "Transform.InvalidBounds" || name == "Transform.LinearShift" ||
+           name == "Pyramid.InvalidLevel" ||
            name == "Pyramid.EquivalentResult" || name == "Pyramid.KeepsRequestedRange" ||
            name == "SubPixel.KnownShift" || name == "SubPixel.BorderFallback" ||
            name == "Batch.OrderAndErrors" || name == "Batch.SerialParallelEquivalent";

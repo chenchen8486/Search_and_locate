@@ -5,5 +5,6 @@
 namespace NccMatcher {
 
 cv::Mat match(const cv::Mat& search, const cv::Mat& model);
+double scoreSameSize(const cv::Mat& search, const cv::Mat& model);
 
 } // namespace NccMatcher
