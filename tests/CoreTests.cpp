@@ -1,10 +1,12 @@
 #include "Locator.h"
 #include "NccMatcher.h"
 #include "ResultRefiner.h"
+#include "TransformSearch.h"
 #include "TestSupport.h"
 
 #include <opencv2/core.hpp>
 
+#include <limits>
 #include <vector>
 
 void testNccExactLocation()
@@ -191,4 +193,109 @@ void testVicinitySuppressesDuplicates()
     expect(results[0].score == 99 && results[1].score == 97 && results[2].score == 96,
            "去重应保留高分结果并维持降序");
     expect(results[1].x == 54 && results[2].x == 50, "超出任一邻近半径的目标不得误删");
+}
+
+void testAngleSequence()
+{
+    LocatorConfig config;
+    config.angleMinDeg = -10.0;
+    config.angleMaxDeg = 10.0;
+    config.angleStepDeg = 1.0;
+    const std::vector<double> angles = TransformSearch::generateAngles(config);
+    expect(angles.size() == 21, "±10 度、步长 1 应生成 21 个角度");
+    expect(angles.front() == -10.0 && angles.back() == 10.0, "角度端点应包含最小值和最大值");
+    for (size_t i = 1; i < angles.size(); ++i) {
+        expect(angles[i] > angles[i - 1], "角度序列不得重复或倒退");
+    }
+
+    config.angleMinDeg = 0.0;
+    config.angleMaxDeg = 0.5;
+    config.angleStepDeg = 0.1;
+    const std::vector<double> fractional = TransformSearch::generateAngles(config);
+    expect(fractional.size() == 6, "0～0.5、步长 0.1 应生成 6 个角度");
+    for (size_t i = 0; i < fractional.size(); ++i) {
+        expectNear(fractional[i], i * 0.1, 1e-9, "浮点角度序列错误");
+    }
+
+    config.angleMaxDeg = 0.55;
+    const std::vector<double> nonDivisible = TransformSearch::generateAngles(config);
+    expect(nonDivisible.size() == 6 && nonDivisible.back() <= 0.55,
+           "不能整除步长时不得越界、重复或死循环");
+
+    const auto expectInvalid = [](const LocatorConfig& invalid) {
+        bool rejected = false;
+        try {
+            TransformSearch::generateAngles(invalid);
+        } catch (...) {
+            rejected = true;
+        }
+        expect(rejected, "非法角度范围或步长应被拒绝");
+    };
+    LocatorConfig invalid;
+    invalid.angleStepDeg = 0.0;
+    expectInvalid(invalid);
+    invalid.angleStepDeg = -1.0;
+    expectInvalid(invalid);
+    invalid.angleStepDeg = 1.0;
+    invalid.angleMinDeg = 2.0;
+    invalid.angleMaxDeg = -2.0;
+    expectInvalid(invalid);
+    invalid.angleMinDeg = std::numeric_limits<double>::quiet_NaN();
+    invalid.angleMaxDeg = 2.0;
+    expectInvalid(invalid);
+    invalid.angleMinDeg = 0.0;
+    invalid.angleStepDeg = std::numeric_limits<double>::infinity();
+    expectInvalid(invalid);
+}
+
+void testAngleClockwise()
+{
+    cv::Mat model(21, 21, CV_8UC1, cv::Scalar(0));
+    model.at<unsigned char>(10, 16) = 255;
+    LocatorConfig config;
+    config.angleMinDeg = 90.0;
+    config.angleMaxDeg = 90.0;
+
+    const auto rotated = TransformSearch::makeAngleModels(model, config);
+    expect(rotated.size() == 1, "单角度应只生成一个旋转模板");
+    double maximum = 0.0;
+    cv::Point maxLocation;
+    cv::minMaxLoc(rotated[0].image, nullptr, &maximum, nullptr, &maxLocation);
+    expect(maxLocation.x == 10 && maxLocation.y == 16,
+           "中心右侧像素顺时针旋转 90 度后应位于中心下方");
+    expect(rotated[0].image.at<unsigned char>(3, 10) == 0,
+           "顺时针方向不得误转为逆时针");
+}
+
+void testAngleRecoverKnownAngle()
+{
+    cv::Mat model = makeTexturedImage(24, 16, 2468);
+    LocatorConfig rotatedConfig;
+    rotatedConfig.angleMinDeg = 20.0;
+    rotatedConfig.angleMaxDeg = 20.0;
+    const auto rotatedModels = TransformSearch::makeAngleModels(model, rotatedConfig);
+    const cv::Mat& rotated = rotatedModels[0].image;
+
+    cv::Mat search = makeTexturedImage(100, 90, 2469);
+    const cv::Point topLeft(31, 35);
+    rotated.copyTo(search(cv::Rect(topLeft.x, topLeft.y, rotated.cols, rotated.rows)));
+
+    LocatorConfig config;
+    config.angleMinDeg = -30.0;
+    config.angleMaxDeg = 30.0;
+    config.angleStepDeg = 10.0;
+    config.minScore = 99.0;
+    Locator locator;
+    expect(locator.initialize(asLocatorImage(model), config) == LocatorError::Ok,
+           "多角度模板初始化失败");
+    std::vector<LocatorResult> results;
+    expect(locator.execute(asLocatorImage(search), results) == LocatorError::Ok,
+           "多角度搜索执行失败");
+    expect(results.size() == 1, "已知旋转目标应返回一个最佳结果");
+    expectNear(results[0].angle, 20.0, 5.0, "恢复角度误差不得超过角度步长的一半");
+    expectNear(results[0].x, topLeft.x + (rotated.cols - 1) / 2.0, 1e-9,
+               "旋转目标中心 x 错误");
+    expectNear(results[0].y, topLeft.y + (rotated.rows - 1) / 2.0, 1e-9,
+               "旋转目标中心 y 错误");
+    expect(results[0].score > 99.9, "已知旋转目标分数应大于 99.9");
 }

@@ -15,6 +15,9 @@ void testRoiRestrictsSearch();
 void testRoiInvalidRejected();
 void testTopNScoreAndStableOrder();
 void testVicinitySuppressesDuplicates();
+void testAngleSequence();
+void testAngleClockwise();
+void testAngleRecoverKnownAngle();
 
 namespace {
 
@@ -75,7 +78,10 @@ const TestCase tests[] = {
     { "Roi.RestrictsSearch", testRoiRestrictsSearch },
     { "Roi.InvalidRejected", testRoiInvalidRejected },
     { "TopN.ScoreAndStableOrder", testTopNScoreAndStableOrder },
-    { "Vicinity.SuppressesDuplicates", testVicinitySuppressesDuplicates }
+    { "Vicinity.SuppressesDuplicates", testVicinitySuppressesDuplicates },
+    { "Angle.Sequence", testAngleSequence },
+    { "Angle.Clockwise", testAngleClockwise },
+    { "Angle.RecoverKnownAngle", testAngleRecoverKnownAngle }
 };
 
 bool isCoreTest(const std::string& name)
@@ -84,7 +90,9 @@ bool isCoreTest(const std::string& name)
            name == "Execute.NotInitialized" || name == "Ncc.ExactLocation" ||
            name == "Ncc.PaddedStride" || name == "Ncc.ConstantInput" ||
            name == "Roi.RestrictsSearch" || name == "Roi.InvalidRejected" ||
-           name == "TopN.ScoreAndStableOrder" || name == "Vicinity.SuppressesDuplicates";
+           name == "TopN.ScoreAndStableOrder" || name == "Vicinity.SuppressesDuplicates" ||
+           name == "Angle.Sequence" || name == "Angle.Clockwise" ||
+           name == "Angle.RecoverKnownAngle";
 }
 
 bool shouldRun(const TestCase& test, const std::string& mode, const std::string& value)

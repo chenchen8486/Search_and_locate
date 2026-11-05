@@ -1,15 +1,16 @@
 #include "Locator.h"
 #include "LocatorInternal.h"
-#include "NccMatcher.h"
 #include "ResultRefiner.h"
+#include "TransformSearch.h"
 
-#include <algorithm>
 #include <cmath>
 #include <opencv2/core.hpp>
+#include <stdexcept>
 
 struct Locator::State {
     cv::Mat model;
     LocatorConfig config;
+    std::vector<TransformSearch::TransformModel> models;
 };
 
 Locator::Locator() = default;
@@ -35,9 +36,17 @@ LocatorError Locator::initialize(const LocatorImage& model, const LocatorConfig&
         return LocatorError::InvalidImage;
     }
 
+    std::vector<TransformSearch::TransformModel> models;
+    try {
+        models = TransformSearch::makeAngleModels(modelView, config);
+    } catch (const std::invalid_argument&) {
+        return LocatorError::InvalidConfig;
+    }
+
     state_ = std::make_shared<State>();
     state_->model = modelView.clone();
     state_->config = config;
+    state_->models = std::move(models);
     return LocatorError::Ok;
 }
 
@@ -73,28 +82,12 @@ LocatorError Locator::execute(const LocatorImage& search,
         return LocatorError::InvalidImage;
     }
 
-    const cv::Mat response = NccMatcher::match(searchView, state_->model);
-    std::vector<LocatorResult> candidates;
-    for (int y = 0; y < response.rows; ++y) {
-        for (int x = 0; x < response.cols; ++x) {
-            const float value = response.at<float>(y, x);
-            if (!std::isfinite(value)) {
-                continue;
-            }
-            const double score = std::max(0.0, static_cast<double>(value)) * 100.0;
-            if (score < state_->config.minScore) {
-                continue;
-            }
-            LocatorResult result;
-            result.x = offset.x + x + (state_->model.cols - 1) / 2.0;
-            result.y = offset.y + y + (state_->model.rows - 1) / 2.0;
-            result.angle = 0.0;
-            result.scale = 1.0;
-            result.score = score;
-            candidates.push_back(result);
-        }
+    std::vector<LocatorResult> candidates =
+        TransformSearch::searchAngles(state_->models, searchView, state_->config);
+    for (LocatorResult& candidate : candidates) {
+        candidate.x += offset.x;
+        candidate.y += offset.y;
     }
-
     results = ResultRefiner::selectResults(candidates, state_->config);
     return LocatorError::Ok;
 }
