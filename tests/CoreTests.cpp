@@ -1,5 +1,6 @@
 #include "Locator.h"
 #include "NccMatcher.h"
+#include "ResultRefiner.h"
 #include "TestSupport.h"
 
 #include <opencv2/core.hpp>
@@ -82,4 +83,112 @@ void testNccConstantInput()
     expect(locator.execute(asLocatorImage(zeroSearch), results) == LocatorError::Ok,
            "全零搜索图不应导致执行异常");
     expect(results.empty(), "全零搜索图不应返回 NaN 或虚假匹配");
+}
+
+void testRoiRestrictsSearch()
+{
+    cv::Mat search = makeTexturedImage(100, 80, 3456);
+    cv::Mat model;
+    search(cv::Rect(5, 5, 12, 10)).copyTo(model);
+    model.copyTo(search(cv::Rect(60, 40, 12, 10)));
+
+    LocatorConfig config;
+    config.useRoi = true;
+    config.roi = { 50, 30, 30, 25 };
+    Locator locator;
+    expect(locator.initialize(asLocatorImage(model), config) == LocatorError::Ok,
+           "ROI 测试模板初始化失败");
+    std::vector<LocatorResult> results;
+    expect(locator.execute(asLocatorImage(search), results) == LocatorError::Ok,
+           "有效 ROI 搜索失败");
+    expect(results.size() == 1, "ROI 内精确目标应返回一个结果");
+    expectNear(results[0].x, 65.5, 1e-9, "ROI 结果 x 不应来自区域外目标");
+    expectNear(results[0].y, 44.5, 1e-9, "ROI 结果 y 不应来自区域外目标");
+}
+
+void testRoiInvalidRejected()
+{
+    cv::Mat search = makeTexturedImage(60, 50, 7890);
+    cv::Mat model = makeTexturedImage(12, 10, 7891);
+    const LocatorRect invalidRois[] = {
+        { 0, 0, 0, 10 }, { 0, 0, 10, 0 }, { -1, 0, 10, 10 },
+        { 0, -1, 10, 10 }, { 50, 0, 11, 10 }, { 0, 40, 10, 11 },
+        { 0, 0, 8, 10 }, { 0, 0, 12, 9 }
+    };
+
+    for (const LocatorRect& roi : invalidRois) {
+        LocatorConfig config;
+        config.useRoi = true;
+        config.roi = roi;
+        Locator locator;
+        expect(locator.initialize(asLocatorImage(model), config) == LocatorError::Ok,
+               "ROI 测试模板初始化失败");
+        std::vector<LocatorResult> results;
+        expect(locator.execute(asLocatorImage(search), results) == LocatorError::InvalidRoi,
+               "空、越界或小于模板的 ROI 应返回 InvalidRoi");
+    }
+
+    cv::Mat oversizedModel = makeTexturedImage(70, 60, 7892);
+    Locator oversizedLocator;
+    expect(oversizedLocator.initialize(asLocatorImage(oversizedModel), LocatorConfig()) ==
+               LocatorError::Ok, "大尺寸模板初始化失败");
+    std::vector<LocatorResult> results;
+    expect(oversizedLocator.execute(asLocatorImage(search), results) == LocatorError::InvalidImage,
+           "模板大于搜索图应返回 InvalidImage");
+
+    const double invalidScores[] = { -0.1, 100.1 };
+    for (double score : invalidScores) {
+        LocatorConfig config;
+        config.minScore = score;
+        Locator locator;
+        expect(locator.initialize(asLocatorImage(model), config) == LocatorError::InvalidConfig,
+               "分数阈值超出 0～100 应返回 InvalidConfig");
+    }
+
+    LocatorConfig invalidCount;
+    invalidCount.maxResults = 0;
+    Locator locator;
+    expect(locator.initialize(asLocatorImage(model), invalidCount) == LocatorError::InvalidConfig,
+           "maxResults 小于 1 应返回 InvalidConfig");
+}
+
+void testTopNScoreAndStableOrder()
+{
+    const std::vector<LocatorResult> candidates = {
+        { 30, 20, 0, 1, 80 },
+        { 20, 0, 0, 1, 95 },
+        { 10, 30, 0, 1, 95 },
+        { 10, 20, 0, 1, 95 }
+    };
+    LocatorConfig config;
+    config.minScore = 90.0;
+    config.maxResults = 3;
+
+    const std::vector<LocatorResult> results = ResultRefiner::selectResults(candidates, config);
+    expect(results.size() == 3, "阈值过滤后 Top-3 应只返回三个结果");
+    expect(results[0].x == 10 && results[0].y == 20,
+           "同分时应先按 x 升序、再按 y 升序排列");
+    expect(results[1].x == 10 && results[1].y == 30, "第二个结果应为同 x 的较大 y");
+    expect(results[2].x == 20 && results[2].y == 0, "第三个结果应为次优 x 坐标");
+}
+
+void testVicinitySuppressesDuplicates()
+{
+    const std::vector<LocatorResult> candidates = {
+        { 50, 50, 0, 1, 99 },
+        { 52, 53, 0, 1, 98 },
+        { 54, 50, 0, 1, 97 },
+        { 50, 55, 0, 1, 96 },
+        { 53, 54, 0, 1, 95 }
+    };
+    LocatorConfig config;
+    config.maxResults = 10;
+    config.xVicinity = 3;
+    config.yVicinity = 4;
+
+    const std::vector<LocatorResult> results = ResultRefiner::selectResults(candidates, config);
+    expect(results.size() == 3, "邻近去重后应保留三个独立目标");
+    expect(results[0].score == 99 && results[1].score == 97 && results[2].score == 96,
+           "去重应保留高分结果并维持降序");
+    expect(results[1].x == 54 && results[2].x == 50, "超出任一邻近半径的目标不得误删");
 }

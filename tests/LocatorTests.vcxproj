@@ -93,6 +93,7 @@
     <ClCompile Include="CoreTests.cpp" />
     <ClCompile Include="..\src\Locator.cpp" />
     <ClCompile Include="..\src\NccMatcher.cpp" />
+    <ClCompile Include="..\src\ResultRefiner.cpp" />
     <ClCompile Include="..\tools\BatchData.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

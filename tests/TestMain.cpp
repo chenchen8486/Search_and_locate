@@ -11,6 +11,10 @@ void testPairingErrors();
 void testNccExactLocation();
 void testNccPaddedStride();
 void testNccConstantInput();
+void testRoiRestrictsSearch();
+void testRoiInvalidRejected();
+void testTopNScoreAndStableOrder();
+void testVicinitySuppressesDuplicates();
 
 namespace {
 
@@ -67,14 +71,20 @@ const TestCase tests[] = {
     { "Data.PairingErrors", testPairingErrors },
     { "Ncc.ExactLocation", testNccExactLocation },
     { "Ncc.PaddedStride", testNccPaddedStride },
-    { "Ncc.ConstantInput", testNccConstantInput }
+    { "Ncc.ConstantInput", testNccConstantInput },
+    { "Roi.RestrictsSearch", testRoiRestrictsSearch },
+    { "Roi.InvalidRejected", testRoiInvalidRejected },
+    { "TopN.ScoreAndStableOrder", testTopNScoreAndStableOrder },
+    { "Vicinity.SuppressesDuplicates", testVicinitySuppressesDuplicates }
 };
 
 bool isCoreTest(const std::string& name)
 {
     return name == "Config.Defaults" || name == "Image.EmptyRejected" ||
            name == "Execute.NotInitialized" || name == "Ncc.ExactLocation" ||
-           name == "Ncc.PaddedStride" || name == "Ncc.ConstantInput";
+           name == "Ncc.PaddedStride" || name == "Ncc.ConstantInput" ||
+           name == "Roi.RestrictsSearch" || name == "Roi.InvalidRejected" ||
+           name == "TopN.ScoreAndStableOrder" || name == "Vicinity.SuppressesDuplicates";
 }
 
 bool shouldRun(const TestCase& test, const std::string& mode, const std::string& value)
