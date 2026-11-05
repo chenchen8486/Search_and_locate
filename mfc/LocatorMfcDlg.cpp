@@ -1,10 +1,12 @@
 #include "LocatorMfcDlg.h"
 
 #include "BatchData.h"
+#include "BatchLocator.h"
 #include "resource.h"
 
 #include <afxdlgs.h>
 #include <atlconv.h>
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -78,6 +80,8 @@ BEGIN_MESSAGE_MAP(CLocatorMfcDlg, CDialogEx)
     ON_BN_CLICKED(IDC_SELECT_ROI, &CLocatorMfcDlg::OnSelectRoi)
     ON_BN_CLICKED(IDC_CLEAR_ROI, &CLocatorMfcDlg::OnClearRoi)
     ON_BN_CLICKED(IDC_EXECUTE, &CLocatorMfcDlg::OnExecute)
+    ON_BN_CLICKED(IDC_BATCH_BROWSE, &CLocatorMfcDlg::OnBatchBrowse)
+    ON_BN_CLICKED(IDC_BATCH_RUN, &CLocatorMfcDlg::OnBatchRun)
     ON_MESSAGE(WM_IMAGE_SELECTION_CHANGED, &CLocatorMfcDlg::OnImageSelectionChanged)
 END_MESSAGE_MAP()
 
@@ -90,11 +94,7 @@ BOOL CLocatorMfcDlg::OnInitDialog()
     templateView_.SubclassDlgItem(IDC_TEMPLATE_VIEW, this);
     resultsList_.SubclassDlgItem(IDC_RESULT_LIST, this);
     resultsList_.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
-    resultsList_.InsertColumn(0, L"x", LVCFMT_LEFT, 95);
-    resultsList_.InsertColumn(1, L"y", LVCFMT_LEFT, 95);
-    resultsList_.InsertColumn(2, L"角度", LVCFMT_LEFT, 80);
-    resultsList_.InsertColumn(3, L"尺度", LVCFMT_LEFT, 80);
-    resultsList_.InsertColumn(4, L"分数", LVCFMT_LEFT, 100);
+    prepareResultList(false);
 
     SetDlgItemText(IDC_ANGLE_MIN, L"0");
     SetDlgItemText(IDC_ANGLE_MAX, L"0");
@@ -108,6 +108,10 @@ BOOL CLocatorMfcDlg::OnInitDialog()
     SetDlgItemText(IDC_MAX_RESULTS, L"1");
     SetDlgItemText(IDC_X_VICINITY, L"0");
     SetDlgItemText(IDC_Y_VICINITY, L"0");
+    SetDlgItemText(IDC_BATCH_COUNT, L"0");
+    SetDlgItemText(IDC_BATCH_THREADS, L"20");
+    SetDlgItemText(IDC_BATCH_PATH, L"");
+    SetDlgItemText(IDC_BATCH_STATS, L"批量结果列表仅显示失败任务");
     SetDlgItemText(IDC_SEARCH_PATH, L"未加载搜索图");
     SetDlgItemText(IDC_TEMPLATE_PATH, L"未加载模板");
     SetDlgItemText(IDC_STATUS_TEXT, L"请先加载搜索图和模板");
@@ -283,7 +287,7 @@ void CLocatorMfcDlg::OnExecute()
         return;
     }
 
-    resultsList_.DeleteAllItems();
+    prepareResultList(false);
     for (size_t i = 0; i < results.size(); ++i) {
         const LocatorResult& result = results[i];
         CString value;
@@ -307,4 +311,125 @@ void CLocatorMfcDlg::OnExecute()
     status.Format(L"预处理 %.3f ms，搜索 %.3f ms，整体 %.3f ms，共 %d 个结果",
                   preprocessMs, searchMs, totalMs, static_cast<int>(results.size()));
     SetDlgItemText(IDC_STATUS_TEXT, status);
+}
+
+
+void CLocatorMfcDlg::prepareResultList(bool batch)
+{
+    resultsList_.DeleteAllItems();
+    CHeaderCtrl* header = resultsList_.GetHeaderCtrl();
+    while (header != nullptr && header->GetItemCount() > 0) {
+        resultsList_.DeleteColumn(0);
+    }
+    if (batch) {
+        resultsList_.InsertColumn(0, L"任务", LVCFMT_LEFT, 80);
+        resultsList_.InsertColumn(1, L"失败原因", LVCFMT_LEFT, 250);
+        resultsList_.InsertColumn(2, L"预处理 ms", LVCFMT_LEFT, 120);
+        resultsList_.InsertColumn(3, L"搜索 ms", LVCFMT_LEFT, 120);
+        resultsList_.InsertColumn(4, L"整体 ms", LVCFMT_LEFT, 120);
+    } else {
+        resultsList_.InsertColumn(0, L"x", LVCFMT_LEFT, 95);
+        resultsList_.InsertColumn(1, L"y", LVCFMT_LEFT, 95);
+        resultsList_.InsertColumn(2, L"角度", LVCFMT_LEFT, 80);
+        resultsList_.InsertColumn(3, L"尺度", LVCFMT_LEFT, 80);
+        resultsList_.InsertColumn(4, L"分数", LVCFMT_LEFT, 100);
+    }
+}
+
+void CLocatorMfcDlg::OnBatchBrowse()
+{
+    CFileDialog dialog(TRUE, L"bmp", nullptr, OFN_FILEMUSTEXIST,
+                       L"BMP 文件 (*.bmp)|*.bmp|所有文件 (*.*)|*.*||", this);
+    if (dialog.DoModal() != IDOK) {
+        return;
+    }
+    const CString path = dialog.GetPathName();
+    const int separator = path.ReverseFind(L'\\');
+    if (separator > 0) {
+        SetDlgItemText(IDC_BATCH_PATH, path.Left(separator));
+    }
+}
+
+void CLocatorMfcDlg::OnBatchRun()
+{
+    CString directory;
+    GetDlgItemText(IDC_BATCH_PATH, directory);
+    directory.Trim();
+    int count = 0;
+    int threads = 0;
+    LocatorConfig config;
+    if (directory.IsEmpty()) {
+        AfxMessageBox(L"请输入或选择 Thick 数据目录");
+        return;
+    }
+    if (!readInt(this, IDC_BATCH_COUNT, count) || count < 0 ||
+        !readInt(this, IDC_BATCH_THREADS, threads) || !readConfig(config)) {
+        AfxMessageBox(L"批量任务数、线程数或搜索参数无效");
+        return;
+    }
+    config.useRoi = useRoi_;
+    if (useRoi_) {
+        config.roi = roi_;
+    }
+
+    CWaitCursor wait;
+    try {
+        const std::vector<ThickPair> pairs = findThickPairs(
+            std::string(CT2A(directory.GetString(), CP_ACP)));
+        const int actualCount = count == 0 ? static_cast<int>(pairs.size()) : count;
+        BatchDataSet data = makeBenchmarkTasks(pairs, actualCount);
+        for (BatchTask& task : data.tasks) {
+            task.config = config;
+        }
+        const auto start = std::chrono::steady_clock::now();
+        const std::vector<BatchResult> results = executeBatch(data.tasks, threads);
+        const double wallMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count();
+
+        prepareResultList(true);
+        double preprocessSum = 0.0;
+        double searchSum = 0.0;
+        double totalSum = 0.0;
+        int succeeded = 0;
+        int failureRow = 0;
+        std::vector<double> totals;
+        for (const BatchResult& result : results) {
+            preprocessSum += result.preprocessMs;
+            searchSum += result.searchMs;
+            totalSum += result.totalMs;
+            totals.push_back(result.totalMs);
+            const bool passed = result.error == LocatorError::Ok && !result.matches.empty();
+            if (passed) {
+                ++succeeded;
+                continue;
+            }
+            CString value;
+            value.Format(L"%d", result.id);
+            const int row = resultsList_.InsertItem(failureRow++, value);
+            resultsList_.SetItemText(row, 1,
+                result.error == LocatorError::Ok ? CString(L"无匹配") : CString(errorText(result.error)));
+            value.Format(L"%.3f", result.preprocessMs);
+            resultsList_.SetItemText(row, 2, value);
+            value.Format(L"%.3f", result.searchMs);
+            resultsList_.SetItemText(row, 3, value);
+            value.Format(L"%.3f", result.totalMs);
+            resultsList_.SetItemText(row, 4, value);
+        }
+        std::sort(totals.begin(), totals.end());
+        const double countValue = static_cast<double>(results.size());
+        const size_t p99Index = static_cast<size_t>(std::ceil(countValue * 0.99)) - 1;
+        CString statistics;
+        statistics.Format(
+            L"总数 %d，成功 %d，失败 %d\r\n预处理均值 %.3f ms，搜索均值 %.3f ms\r\n单任务整体均值 %.3f ms，P99 %.3f ms\r\n批量总耗时 %.3f ms",
+            static_cast<int>(results.size()), succeeded,
+            static_cast<int>(results.size()) - succeeded,
+            preprocessSum / countValue, searchSum / countValue,
+            totalSum / countValue, totals[p99Index], wallMs);
+        SetDlgItemText(IDC_BATCH_STATS, statistics);
+        SetDlgItemText(IDC_STATUS_TEXT, L"批量评估完成，下方列表仅显示失败或无匹配任务");
+    } catch (const std::exception& error) {
+        const CString message(CA2W(error.what(), CP_UTF8));
+        SetDlgItemText(IDC_STATUS_TEXT, message);
+        AfxMessageBox(message);
+    }
 }

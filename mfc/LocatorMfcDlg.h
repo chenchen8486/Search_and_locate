@@ -20,10 +20,13 @@ protected:
     afx_msg void OnSelectRoi();
     afx_msg void OnClearRoi();
     afx_msg void OnExecute();
+    afx_msg void OnBatchBrowse();
+    afx_msg void OnBatchRun();
     afx_msg LRESULT OnImageSelectionChanged(WPARAM wParam, LPARAM lParam);
 
 private:
     bool readConfig(LocatorConfig& config);
+    void prepareResultList(bool batch);
     void showError(LocatorError error);
 
     cv::Mat searchImage_;

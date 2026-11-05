@@ -28,6 +28,12 @@ void testPyramidKeepsRequestedRange();
 void testSubPixelKnownShift();
 void testSubPixelBorderFallback();
 void testSyntheticFixedSeed100();
+void testBatchOrderAndErrors();
+void testBatchSerialParallelEquivalent();
+void testRealDataAll197();
+void testPerformanceTaskComposition();
+void testPerformanceBenchmark500();
+void exportRealBaseline();
 
 namespace {
 
@@ -101,7 +107,12 @@ const TestCase tests[] = {
     { "Pyramid.KeepsRequestedRange", testPyramidKeepsRequestedRange },
     { "SubPixel.KnownShift", testSubPixelKnownShift },
     { "SubPixel.BorderFallback", testSubPixelBorderFallback },
-    { "Synthetic.FixedSeed100", testSyntheticFixedSeed100 }
+    { "Synthetic.FixedSeed100", testSyntheticFixedSeed100 },
+    { "Batch.OrderAndErrors", testBatchOrderAndErrors },
+    { "Batch.SerialParallelEquivalent", testBatchSerialParallelEquivalent },
+    { "RealData.All197", testRealDataAll197 },
+    { "Performance.TaskComposition", testPerformanceTaskComposition },
+    { "Performance.Benchmark500", testPerformanceBenchmark500 }
 };
 
 bool isCoreTest(const std::string& name)
@@ -116,7 +127,8 @@ bool isCoreTest(const std::string& name)
            name == "Scale.RecoverKnownScale" || name == "Transform.CombinedSearch" ||
            name == "Transform.InvalidBounds" || name == "Pyramid.InvalidLevel" ||
            name == "Pyramid.EquivalentResult" || name == "Pyramid.KeepsRequestedRange" ||
-           name == "SubPixel.KnownShift" || name == "SubPixel.BorderFallback";
+           name == "SubPixel.KnownShift" || name == "SubPixel.BorderFallback" ||
+           name == "Batch.OrderAndErrors" || name == "Batch.SerialParallelEquivalent";
 }
 
 bool shouldRun(const TestCase& test, const std::string& mode, const std::string& value)
@@ -125,13 +137,16 @@ bool shouldRun(const TestCase& test, const std::string& mode, const std::string&
         return value == test.name;
     }
     if (value == "all") {
-        return true;
+        return std::string(test.name).compare(0, 12, "Performance.") != 0;
     }
     if (value == "core") {
         return isCoreTest(test.name);
     }
     if (value == "synthetic") {
         return test.name == std::string("Synthetic.FixedSeed100");
+    }
+    if (value == "performance") {
+        return std::string(test.name).compare(0, 12, "Performance.") == 0;
     }
     return false;
 }
@@ -140,13 +155,22 @@ bool shouldRun(const TestCase& test, const std::string& mode, const std::string&
 
 int main(int argc, char* argv[])
 {
+    if (argc == 2 && std::string(argv[1]) == "--export-real-baseline") {
+        try {
+            exportRealBaseline();
+            return 0;
+        } catch (const std::exception& error) {
+            std::cerr << "导出真实数据基准失败：" << error.what() << '\n';
+            return 1;
+        }
+    }
     std::string mode = "--suite";
     std::string value = "all";
     if (argc == 3 && (std::string(argv[1]) == "--test" || std::string(argv[1]) == "--suite")) {
         mode = argv[1];
         value = argv[2];
     } else if (argc != 1) {
-        std::cerr << "用法：LocatorTests [--test <测试名> | --suite <core|synthetic|all|performance|gpu>]\n";
+        std::cerr << "用法：LocatorTests [--test <测试名> | --suite <core|synthetic|all|performance|gpu> | --export-real-baseline]\n";
         return 2;
     }
 

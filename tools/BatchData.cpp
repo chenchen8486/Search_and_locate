@@ -122,3 +122,33 @@ bool loadGrayImage(const std::string& path, cv::Mat& image)
     }
     return !image.empty() && image.type() == CV_8UC1;
 }
+
+BatchDataSet makeBenchmarkTasks(const std::vector<ThickPair>& pairs, int count)
+{
+    if (count < 0 || (count > 0 && pairs.empty())) {
+        throw std::invalid_argument("批量任务数量或输入配对无效");
+    }
+    BatchDataSet data;
+    data.models.reserve(count);
+    data.searches.reserve(count);
+    data.tasks.reserve(count);
+    for (int index = 0; index < count; ++index) {
+        const ThickPair& pair = pairs[index % pairs.size()];
+        cv::Mat model;
+        cv::Mat search;
+        if (!loadGrayImage(pair.kernelPath, model) || !loadGrayImage(pair.searchPath, search)) {
+            throw std::runtime_error("批量图像读取失败：Thick_" + std::to_string(pair.id));
+        }
+        data.models.push_back(model);
+        data.searches.push_back(search);
+
+        BatchTask task = {};
+        task.id = index;
+        task.model = { data.models[index].data, data.models[index].cols,
+                       data.models[index].rows, static_cast<int>(data.models[index].step) };
+        task.search = { data.searches[index].data, data.searches[index].cols,
+                        data.searches[index].rows, static_cast<int>(data.searches[index].step) };
+        data.tasks.push_back(task);
+    }
+    return data;
+}
