@@ -174,7 +174,13 @@ void CImageViewControl::OnPaint()
     info.header.biPlanes = 1;
     info.header.biBitCount = 8;
     info.header.biCompression = BI_RGB;
-    info.header.biSizeImage = static_cast<DWORD>(image_.step * image_.rows);
+    const int stride = (image_.cols + 3) & ~3;
+    std::vector<BYTE> packed(static_cast<size_t>(stride) * image_.rows);
+    for (int row = 0; row < image_.rows; ++row) {
+        std::copy(image_.ptr<uchar>(row), image_.ptr<uchar>(row) + image_.cols,
+                  packed.begin() + static_cast<size_t>(row) * stride);
+    }
+    info.header.biSizeImage = static_cast<DWORD>(packed.size());
     for (int i = 0; i < 256; ++i) {
         info.colors[i].rgbRed = static_cast<BYTE>(i);
         info.colors[i].rgbGreen = static_cast<BYTE>(i);
@@ -182,7 +188,7 @@ void CImageViewControl::OnPaint()
     }
     ::StretchDIBits(dc.GetSafeHdc(), bitmapRect_.left, bitmapRect_.top,
                     bitmapRect_.Width(), bitmapRect_.Height(),
-                    0, 0, image_.cols, image_.rows, image_.data,
+                    0, 0, image_.cols, image_.rows, packed.data(),
                     reinterpret_cast<BITMAPINFO*>(&info), DIB_RGB_COLORS, SRCCOPY);
 
     CPen resultPen(PS_SOLID, 2, RGB(0, 220, 100));
