@@ -201,6 +201,19 @@ std::vector<SubpixelSample> makeSubpixelSamples(const cv::Mat& model, int resolu
         maps.push_back(makeLinearMap(model.cols, static_cast<double>(step) / resolution));
     }
 
+    cv::Mat horizontal(model.rows * side, model.cols, CV_16UC1);
+    for (int stepX = -half; stepX <= half; ++stepX) {
+        const LinearMap& map = maps[stepX + half];
+        for (int y = 0; y < model.rows; ++y) {
+            const unsigned char* source = model.ptr<unsigned char>(y);
+            unsigned short* output = horizontal.ptr<unsigned short>((stepX + half) * model.rows + y);
+            for (int x = 0; x < model.cols; ++x) {
+                output[x] = static_cast<unsigned short>(source[map.left[x]] * map.leftWeight[x] +
+                                                        source[map.right[x]] * map.rightWeight[x]);
+            }
+        }
+    }
+
     std::vector<SubpixelSample> samples;
     samples.reserve(side * side);
     for (int stepY = -half; stepY <= half; ++stepY) {
@@ -211,7 +224,23 @@ std::vector<SubpixelSample> makeSubpixelSamples(const cv::Mat& model, int resolu
             sample.offsetX = static_cast<double>(stepX) / resolution;
             sample.offsetY = offsetY;
             sample.image = storage.rowRange(index * model.rows, (index + 1) * model.rows);
-            translateLinearWithMap(model, offsetY, maps[stepX + half], sample.image);
+            for (int y = 0; y < model.rows; ++y) {
+                const double sourceY = y - offsetY;
+                const int floorY = static_cast<int>(std::floor(sourceY));
+                const int y0 = std::max(0, std::min(model.rows - 1, floorY));
+                const int y1 = std::max(0, std::min(model.rows - 1, floorY + 1));
+                const int weightY = static_cast<int>(std::lround((sourceY - floorY) * 32.0));
+                const int topWeight = 32 - weightY;
+                const unsigned short* row0 = horizontal.ptr<unsigned short>(
+                    (stepX + half) * model.rows + y0);
+                const unsigned short* row1 = horizontal.ptr<unsigned short>(
+                    (stepX + half) * model.rows + y1);
+                unsigned char* output = sample.image.ptr<unsigned char>(y);
+                for (int x = 0; x < model.cols; ++x) {
+                    const int sum = row0[x] * topWeight + row1[x] * weightY;
+                    output[x] = static_cast<unsigned char>((sum + 512) >> 10);
+                }
+            }
             sample.sum = 0.0;
             sample.squares = 0.0;
             for (int y = 0; y < model.rows; ++y) {
