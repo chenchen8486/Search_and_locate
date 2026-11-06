@@ -20,6 +20,8 @@ void testRoiRestrictsSearch();
 void testRoiInvalidRejected();
 void testTopNScoreAndStableOrder();
 void testVicinitySuppressesDuplicates();
+void testVicinityNegativeRejected();
+void testGpuUnavailable();
 void testAngleSequence();
 void testAngleClockwise();
 void testAngleRecoverKnownAngle();
@@ -99,7 +101,25 @@ void testExecuteNotInitialized()
     expect(results.empty(), "执行入口应清空旧结果");
 }
 
+#ifndef LOCATOR_WITH_CUDA
+void testBackendGpuUnavailable()
+{
+    const cv::Mat model = makeTexturedImage(12, 10, 19201);
+    LocatorConfig config;
+    config.backend = LocatorBackend::Gpu;
+    Locator locator;
+    expect(locator.initialize(asLocatorImage(model), config) == LocatorError::BackendUnavailable,
+           "CPU-only 构建选择 GPU 应返回 BackendUnavailable");
+    std::vector<LocatorResult> results(1);
+    expect(locator.execute(asLocatorImage(model), results) == LocatorError::NotInitialized &&
+           results.empty(), "GPU 初始化失败后不得执行 CPU 搜索或保留旧结果");
+}
+#endif
+
 const TestCase tests[] = {
+#ifndef LOCATOR_WITH_CUDA
+    { "Backend.GpuUnavailable", testBackendGpuUnavailable },
+#endif
     { "Config.Defaults", testConfigDefaults },
     { "Image.EmptyRejected", testEmptyImageRejected },
     { "Execute.NotInitialized", testExecuteNotInitialized },
@@ -114,6 +134,7 @@ const TestCase tests[] = {
     { "Roi.InvalidRejected", testRoiInvalidRejected },
     { "TopN.ScoreAndStableOrder", testTopNScoreAndStableOrder },
     { "Vicinity.SuppressesDuplicates", testVicinitySuppressesDuplicates },
+    { "Vicinity.NegativeRejected", testVicinityNegativeRejected },
     { "Angle.Sequence", testAngleSequence },
     { "Angle.Clockwise", testAngleClockwise },
     { "Angle.RecoverKnownAngle", testAngleRecoverKnownAngle },
@@ -144,6 +165,7 @@ const TestCase tests[] = {
     { "Gpu.Synthetic100", testGpuSyntheticFixedSeed100 },
     { "Gpu.RealData197", testGpuRealDataAll197 },
     { "Gpu.ConstantSearchWindow", testGpuConstantSearchWindow },
+    { "Gpu.Unavailable", testGpuUnavailable },
     { "Gpu.Performance500", testGpuPerformanceBenchmark500 },
     { "MfcWorkflow.SingleSearch", testMfcWorkflowSingleSearch },
     { "MfcWorkflow.BatchTiming", testMfcWorkflowBatchTiming }
@@ -157,6 +179,7 @@ bool isCoreTest(const std::string& name)
            name == "Ncc.ConstantSearchWindow" ||
            name == "Roi.RestrictsSearch" || name == "Roi.InvalidRejected" ||
            name == "TopN.ScoreAndStableOrder" || name == "Vicinity.SuppressesDuplicates" ||
+           name == "Vicinity.NegativeRejected" ||
            name == "Angle.Sequence" || name == "Angle.Clockwise" ||
            name == "Angle.RecoverKnownAngle" || name == "Scale.Sequence" ||
            name == "Scale.RecoverKnownScale" || name == "Scale.ShrunkModelFits" ||

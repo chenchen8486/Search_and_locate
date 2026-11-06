@@ -1,3 +1,4 @@
+#define _CRT_SECURE_NO_WARNINGS
 #include "BatchLocator.h"
 #include "Locator.h"
 #include "NccMatcher.h"
@@ -7,6 +8,7 @@
 #include <opencv2/core.hpp>
 
 #include <cmath>
+#include <cstdlib>
 #include <vector>
 
 namespace {
@@ -183,6 +185,21 @@ void testGpuConstantSearchWindow()
            "GPU 混合搜索图的 NCC 响应应有效");
     expect(response.at<float>(0, 28) == 0.0f,
            "GPU 常量搜索窗口的零方差 NCC 应为 0");
+}
+
+void testGpuUnavailable()
+{
+    if (std::getenv("LOCATOR_TEST_UNAVAILABLE_CHILD") != nullptr) {
+        const cv::Mat model = makeTexturedImage(12, 10, 19200);
+        LocatorConfig config;
+        config.backend = LocatorBackend::Gpu;
+        Locator locator;
+        expect(locator.initialize(asLocatorImage(model), config) == LocatorError::BackendUnavailable,
+               "隐藏 CUDA 设备后必须返回 BackendUnavailable");
+        return;
+    }
+    expect(runGpuUnavailableIsolated() == 0,
+           "独立进程的 GPU 不可用验收失败");
 }
 
 void testGpuPerformanceBenchmark500()

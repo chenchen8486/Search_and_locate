@@ -688,3 +688,17 @@ void testScaleShrunkModelFits()
     expect(roi.execute(asLocatorImage(search), results) == LocatorError::Ok,
            "原模板大于 ROI 但缩小后可容纳时应允许搜索");
 }
+
+void testVicinityNegativeRejected()
+{
+    const cv::Mat model = makeTexturedImage(12, 10, 19100);
+    LocatorConfig config;
+    config.xVicinity = -1;
+    Locator locator;
+    expect(locator.initialize(asLocatorImage(model), config) == LocatorError::InvalidConfig,
+           "负 x 邻近半径应返回 InvalidConfig");
+    config.xVicinity = 0;
+    config.yVicinity = -1;
+    expect(locator.initialize(asLocatorImage(model), config) == LocatorError::InvalidConfig,
+           "负 y 邻近半径应返回 InvalidConfig");
+}

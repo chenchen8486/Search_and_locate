@@ -15,3 +15,4 @@ std::string batchDataTempDirectory();
 void runSyntheticFixedSeed100(LocatorBackend backend, const std::string& reportFile);
 void runRealDataAll197(LocatorBackend backend, double scoreTolerance);
 void runPerformanceBenchmark500(LocatorBackend backend);
+int runGpuUnavailableIsolated();

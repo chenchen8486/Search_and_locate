@@ -80,6 +80,27 @@ void check(cudaError_t error)
     }
 }
 
+class Stream {
+public:
+    Stream()
+    {
+        check(cudaStreamCreate(&stream_));
+    }
+
+    ~Stream()
+    {
+        cudaStreamDestroy(stream_);
+    }
+
+    cudaStream_t get() const
+    {
+        return stream_;
+    }
+
+private:
+    cudaStream_t stream_ = nullptr;
+};
+
 } // namespace
 
 bool isAvailable()
@@ -102,24 +123,26 @@ cv::Mat match(const cv::Mat& search, const cv::Mat& model)
     const int responseWidth = search.cols - model.cols + 1;
     const int responseHeight = search.rows - model.rows + 1;
     cv::Mat response(responseHeight, responseWidth, CV_32FC1);
+    Stream stream;
     DeviceBuffer deviceSearch(continuousSearch.total());
     DeviceBuffer deviceModel(continuousModel.total());
     DeviceBuffer deviceResponse(response.total() * response.elemSize());
-    check(cudaMemcpy(deviceSearch.get(), continuousSearch.data, continuousSearch.total(),
-                     cudaMemcpyHostToDevice));
-    check(cudaMemcpy(deviceModel.get(), continuousModel.data, continuousModel.total(),
-                     cudaMemcpyHostToDevice));
+    check(cudaMemcpyAsync(deviceSearch.get(), continuousSearch.data, continuousSearch.total(),
+                          cudaMemcpyHostToDevice, stream.get()));
+    check(cudaMemcpyAsync(deviceModel.get(), continuousModel.data, continuousModel.total(),
+                          cudaMemcpyHostToDevice, stream.get()));
     const dim3 block(16, 16);
     const dim3 grid((responseWidth + block.x - 1) / block.x,
                     (responseHeight + block.y - 1) / block.y);
-    nccKernel<<<grid, block>>>(
+    nccKernel<<<grid, block, 0, stream.get()>>>(
         static_cast<const unsigned char*>(deviceSearch.get()), search.cols,
         static_cast<const unsigned char*>(deviceModel.get()), model.cols, model.rows,
         static_cast<float*>(deviceResponse.get()), responseWidth, responseHeight);
     check(cudaGetLastError());
-    check(cudaDeviceSynchronize());
-    check(cudaMemcpy(response.data, deviceResponse.get(),
-                     response.total() * response.elemSize(), cudaMemcpyDeviceToHost));
+    check(cudaMemcpyAsync(response.data, deviceResponse.get(),
+                          response.total() * response.elemSize(), cudaMemcpyDeviceToHost,
+                          stream.get()));
+    check(cudaStreamSynchronize(stream.get()));
     return response;
 }
 
