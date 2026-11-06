@@ -618,3 +618,73 @@ void testNccConstantSearchWindow()
     expect(response.at<float>(0, 25) == 0.0f,
            "常量搜索窗口的零方差 NCC 应为 0，不能产生虚假高分");
 }
+
+void testPyramidCoarseOrderReversal()
+{
+    const cv::Mat model = makeTexturedImage(24, 24, 19001);
+    const cv::Mat noise = makeTexturedImage(24, 24, 19002);
+    cv::Mat target = model.clone();
+    for (int y = 0; y < target.rows; ++y) {
+        for (int x = 0; x < target.cols; ++x) {
+            const int value = target.at<unsigned char>(y, x) +
+                              (static_cast<int>(noise.at<unsigned char>(y, x)) - 128) / 32;
+            target.at<unsigned char>(y, x) = static_cast<unsigned char>(
+                std::max(0, std::min(255, value)));
+        }
+    }
+    cv::Mat distractor;
+    cv::GaussianBlur(model, distractor, cv::Size(5, 5), 1.2);
+    cv::Mat search = makeTexturedImage(72, 64, 19003);
+    target.copyTo(search(cv::Rect(8, 10, 24, 24)));
+    distractor.copyTo(search(cv::Rect(40, 32, 24, 24)));
+    const cv::Mat coarseModel = PyramidSearch::buildPyramids(model, 3).back();
+    const cv::Mat coarseSearch = PyramidSearch::buildPyramids(search, 3).back();
+    const double targetFine = NccMatcher::scoreSameSize(target, model);
+    const double distractorFine = NccMatcher::scoreSameSize(distractor, model);
+    const double targetCoarse = NccMatcher::scoreSameSize(
+        coarseSearch(cv::Rect(2, 2, 6, 6)), coarseModel);
+    const double distractorCoarse = NccMatcher::scoreSameSize(
+        coarseSearch(cv::Rect(10, 8, 6, 6)), coarseModel);
+    std::cout << "原层目标/干扰分数：" << targetFine << "，" << distractorFine
+              << "，粗层目标/干扰分数：" << targetCoarse << "，" << distractorCoarse << '\n';
+    expect(targetFine > distractorFine && distractorCoarse > targetCoarse,
+           "测试数据必须形成粗层排序反转");
+
+    LocatorConfig config;
+    config.pyramidLevels = 3;
+    config.minScore = 80.0;
+    Locator locator;
+    expect(locator.initialize(asLocatorImage(model), config) == LocatorError::Ok,
+           "粗层排序反转用例初始化失败");
+    std::vector<LocatorResult> results;
+    expect(locator.execute(asLocatorImage(search), results) == LocatorError::Ok,
+           "粗层排序反转用例搜索失败");
+    expect(results.size() == 1, "粗层排序反转用例应返回一个结果");
+    expectNear(results[0].x, 19.5, 1e-9,
+               "粗层错误候选不得覆盖原图更优目标，实际 x=" + std::to_string(results[0].x));
+    expectNear(results[0].y, 21.5, 1e-9,
+               "粗层错误候选不得覆盖原图更优目标，实际 y=" + std::to_string(results[0].y));
+}
+
+void testScaleShrunkModelFits()
+{
+    const cv::Mat model = makeTexturedImage(100, 100, 19004);
+    const cv::Mat search = makeTexturedImage(60, 60, 19005);
+    LocatorConfig config;
+    config.scaleMin = 0.5;
+    config.scaleMax = 0.5;
+    Locator fullImage;
+    expect(fullImage.initialize(asLocatorImage(model), config) == LocatorError::Ok,
+           "缩小模板初始化失败");
+    std::vector<LocatorResult> results;
+    expect(fullImage.execute(asLocatorImage(search), results) == LocatorError::Ok,
+           "原模板大于图像但缩小后可容纳时应允许搜索");
+
+    config.useRoi = true;
+    config.roi = { 5, 5, 55, 55 };
+    Locator roi;
+    expect(roi.initialize(asLocatorImage(model), config) == LocatorError::Ok,
+           "缩小模板 ROI 初始化失败");
+    expect(roi.execute(asLocatorImage(search), results) == LocatorError::Ok,
+           "原模板大于 ROI 但缩小后可容纳时应允许搜索");
+}

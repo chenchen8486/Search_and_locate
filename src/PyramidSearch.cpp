@@ -74,8 +74,7 @@ std::vector<TransformSearch::Candidate> searchPyramid(
 
         LocatorConfig coarseConfig = config;
         coarseConfig.minScore = coarseMinScore;
-        // ponytail: 每个变换按请求的 Top-N 保留粗层候选，回归若暴露漏检再调整。
-        coarseConfig.maxResults = config.maxResults;
+        coarseConfig.maxResults = static_cast<int>(coarseCandidates.size());
         coarseConfig.xVicinity = 1;
         coarseConfig.yVicinity = 1;
         coarseCandidates = ResultRefiner::selectResults(coarseCandidates, coarseConfig);

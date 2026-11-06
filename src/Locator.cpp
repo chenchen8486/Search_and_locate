@@ -92,16 +92,10 @@ LocatorError Locator::execute(const LocatorImage& search,
             right > search.width || bottom > search.height) {
             return LocatorError::InvalidRoi;
         }
-        if (state_->model.cols > roi.width || state_->model.rows > roi.height) {
-            return LocatorError::InvalidRoi;
-        }
         searchView = searchView(cv::Rect(roi.x, roi.y, roi.width, roi.height));
         offset = cv::Point(roi.x, roi.y);
     }
 
-    if (state_->model.cols > searchView.cols || state_->model.rows > searchView.rows) {
-        return LocatorError::InvalidImage;
-    }
     for (const TransformSearch::TransformModel& model : state_->models) {
         if (model.image.cols > searchView.cols || model.image.rows > searchView.rows) {
             return state_->config.useRoi ? LocatorError::InvalidRoi : LocatorError::InvalidImage;

@@ -25,6 +25,8 @@ void testAngleClockwise();
 void testAngleRecoverKnownAngle();
 void testScaleSequence();
 void testScaleRecoverKnownScale();
+void testScaleShrunkModelFits();
+void testPyramidCoarseOrderReversal();
 void testTransformCombinedSearch();
 void testTransformInvalidBounds();
 void testTransformLinearShift();
@@ -117,11 +119,13 @@ const TestCase tests[] = {
     { "Angle.RecoverKnownAngle", testAngleRecoverKnownAngle },
     { "Scale.Sequence", testScaleSequence },
     { "Scale.RecoverKnownScale", testScaleRecoverKnownScale },
+    { "Scale.ShrunkModelFits", testScaleShrunkModelFits },
     { "Transform.CombinedSearch", testTransformCombinedSearch },
     { "Transform.InvalidBounds", testTransformInvalidBounds },
     { "Transform.LinearShift", testTransformLinearShift },
     { "Pyramid.InvalidLevel", testPyramidInvalidLevel },
     { "Pyramid.EquivalentResult", testPyramidEquivalentResult },
+    { "Pyramid.CoarseOrderReversal", testPyramidCoarseOrderReversal },
     { "Pyramid.KeepsRequestedRange", testPyramidKeepsRequestedRange },
     { "SubPixel.KnownShift", testSubPixelKnownShift },
     { "SubPixel.BorderFallback", testSubPixelBorderFallback },
@@ -155,9 +159,10 @@ bool isCoreTest(const std::string& name)
            name == "TopN.ScoreAndStableOrder" || name == "Vicinity.SuppressesDuplicates" ||
            name == "Angle.Sequence" || name == "Angle.Clockwise" ||
            name == "Angle.RecoverKnownAngle" || name == "Scale.Sequence" ||
-           name == "Scale.RecoverKnownScale" || name == "Transform.CombinedSearch" ||
+           name == "Scale.RecoverKnownScale" || name == "Scale.ShrunkModelFits" ||
+           name == "Transform.CombinedSearch" ||
            name == "Transform.InvalidBounds" || name == "Transform.LinearShift" ||
-           name == "Pyramid.InvalidLevel" ||
+           name == "Pyramid.InvalidLevel" || name == "Pyramid.CoarseOrderReversal" ||
            name == "Pyramid.EquivalentResult" || name == "Pyramid.KeepsRequestedRange" ||
            name == "SubPixel.KnownShift" || name == "SubPixel.BorderFallback" ||
            name == "Batch.OrderAndErrors" || name == "Batch.SerialParallelEquivalent";
