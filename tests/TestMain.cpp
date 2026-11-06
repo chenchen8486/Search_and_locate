@@ -188,7 +188,9 @@ const TestCase tests[] = {
     { "Gpu.ConstantSearchWindow", testGpuConstantSearchWindow },
     { "Gpu.Unavailable", testGpuUnavailable },
     { "Gpu.Performance500", testGpuPerformanceBenchmark500 },
+#ifdef LOCATOR_WITH_CUDA
     { "Gpu.BatchResponseEquivalence", testGpuBatchResponseEquivalence },
+#endif
     { "MfcWorkflow.SingleSearch", testMfcWorkflowSingleSearch },
     { "MfcWorkflow.BatchTiming", testMfcWorkflowBatchTiming }
 };

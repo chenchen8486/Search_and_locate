@@ -208,6 +208,7 @@ void testGpuPerformanceBenchmark500()
     runPerformanceBenchmark500(LocatorBackend::Gpu);
 }
 
+#ifdef LOCATOR_WITH_CUDA
 void testGpuBatchResponseEquivalence()
 {
     std::vector<cv::Mat> owned;
@@ -242,3 +243,4 @@ void testGpuBatchResponseEquivalence()
                "GPU 批量与单任务响应不完全一致，索引 " + std::to_string(index));
     }
 }
+#endif
