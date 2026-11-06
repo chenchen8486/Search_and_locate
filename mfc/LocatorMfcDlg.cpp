@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <limits>
+#include <stdexcept>
 #include <string>
 
 namespace {
@@ -154,6 +155,7 @@ void CLocatorMfcDlg::OnLoadTemplate()
     }
     modelImage_ = image;
     templateView_.setImage(modelImage_);
+    clearResultDisplay();
     SetDlgItemText(IDC_TEMPLATE_PATH, path);
     SetDlgItemText(IDC_STATUS_TEXT, L"模板已加载");
 }
@@ -186,6 +188,7 @@ void CLocatorMfcDlg::OnClearRoi()
     roi_ = { 0, 0, 0, 0 };
     searchView_.clearSelection();
     searchView_.setSelectionEnabled(false);
+    clearResultDisplay();
     SetDlgItemText(IDC_STATUS_TEXT, L"已清除 ROI，搜索范围为完整图像");
 }
 
@@ -201,10 +204,12 @@ LRESULT CLocatorMfcDlg::OnImageSelectionChanged(WPARAM wParam, LPARAM lParam)
     if (selectionForRoi_) {
         roi_ = { selection.x, selection.y, selection.width, selection.height };
         useRoi_ = true;
+        clearResultDisplay();
         SetDlgItemText(IDC_STATUS_TEXT, CString(L"ROI 已设置"));
     } else {
         searchImage_(selection).copyTo(modelImage_);
         templateView_.setImage(modelImage_);
+        clearResultDisplay();
         SetDlgItemText(IDC_TEMPLATE_PATH, L"来自搜索图框选");
         SetDlgItemText(IDC_STATUS_TEXT, L"已从大图生成模板");
         searchView_.clearSelection();
@@ -421,4 +426,91 @@ void CLocatorMfcDlg::OnBatchRun()
         SetDlgItemText(IDC_STATUS_TEXT, message);
         AfxMessageBox(message);
     }
+}
+
+void CLocatorMfcDlg::clearResultDisplay()
+{
+    resultsList_.DeleteAllItems();
+    searchView_.setResults({}, modelImage_.cols, modelImage_.rows);
+}
+
+void CLocatorMfcDlg::runSelfTest(const std::string& directory, const cv::Mat& model,
+                                 const cv::Mat& search, LocatorBackend backend)
+{
+    const auto require = [](bool condition, const char* message) {
+        if (!condition) {
+            throw std::runtime_error(message);
+        }
+    };
+    require(Create(IDD_LOCATOR_MFC) != FALSE, "无法创建无界面对话框");
+    ShowWindow(SW_HIDE);
+    searchImage_ = search;
+    modelImage_ = model;
+    searchView_.setImage(searchImage_);
+    templateView_.setImage(modelImage_);
+    clearResultDisplay();
+    backendCombo_.SetCurSel(backend == LocatorBackend::Gpu ? 1 : 0);
+    SetDlgItemText(IDC_ANGLE_MIN, L"-2");
+    SetDlgItemText(IDC_ANGLE_MAX, L"1");
+    SetDlgItemText(IDC_ANGLE_STEP, L"1");
+    SetDlgItemText(IDC_SCALE_MIN, L"0.9");
+    SetDlgItemText(IDC_SCALE_MAX, L"1.05");
+    SetDlgItemText(IDC_SCALE_STEP, L"0.05");
+    SetDlgItemText(IDC_PYRAMID, L"2");
+    SetDlgItemText(IDC_SUBPIXEL, L"4");
+    SetDlgItemText(IDC_MIN_SCORE, L"85");
+    SetDlgItemText(IDC_MAX_RESULTS, L"2");
+    SetDlgItemText(IDC_X_VICINITY, L"2");
+    SetDlgItemText(IDC_Y_VICINITY, L"3");
+    useRoi_ = true;
+    roi_ = { 10, 10, 100, 100 };
+
+    LocatorConfig config;
+    require(readConfig(config), "对话框参数格式读取失败");
+    require(config.backend == backend && config.angleMinDeg == -2.0 &&
+            config.angleMaxDeg == 1.0 && config.angleStepDeg == 1.0 &&
+            config.scaleMin == 0.9 && config.scaleMax == 1.05 &&
+            config.scaleStep == 0.05 && config.pyramidLevels == 2 &&
+            config.subPixelResolution == 4 && config.minScore == 85.0 &&
+            config.maxResults == 2 && config.xVicinity == 2 && config.yVicinity == 3,
+            "对话框控件到 LocatorConfig 的映射错误");
+    config.useRoi = true;
+    config.roi = roi_;
+    const LocatorWorkflow::SingleResult expected =
+        LocatorWorkflow::runSingle(modelImage_, searchImage_, config);
+    require(expected.error == LocatorError::Ok && !expected.matches.empty(),
+            "同配置核心工作流没有返回有效结果");
+    CString expectedFields[5];
+    expectedFields[0].Format(L"%.4f", expected.matches[0].x);
+    expectedFields[1].Format(L"%.4f", expected.matches[0].y);
+    expectedFields[2].Format(L"%.4f", expected.matches[0].angle);
+    expectedFields[3].Format(L"%.4f", expected.matches[0].scale);
+    expectedFields[4].Format(L"%.2f", expected.matches[0].score);
+    OnExecute();
+    require(resultsList_.GetItemCount() == static_cast<int>(expected.matches.size()) &&
+            searchView_.hasResults(), "对话框单次结果数量或叠加数据与核心不一致");
+    if (resultsList_.GetItemText(0, 0) != expectedFields[0] ||
+        resultsList_.GetItemText(0, 1) != expectedFields[1] ||
+        resultsList_.GetItemText(0, 2) != expectedFields[2] ||
+        resultsList_.GetItemText(0, 3) != expectedFields[3] ||
+        resultsList_.GetItemText(0, 4) != expectedFields[4]) {
+        const CString actual = resultsList_.GetItemText(0, 0) + L"，" +
+            resultsList_.GetItemText(0, 1) + L"，" + resultsList_.GetItemText(0, 2) + L"，" +
+            resultsList_.GetItemText(0, 3) + L"，" + resultsList_.GetItemText(0, 4);
+        throw std::runtime_error("对话框单次结果实际为：" +
+                                 std::string(CT2A(actual.GetString(), CP_UTF8)));
+    }
+    clearResultDisplay();
+    require(resultsList_.GetItemCount() == 0 && !searchView_.hasResults(),
+            "图像或 ROI 变化后仍保留旧结果");
+
+    SetDlgItemText(IDC_BATCH_PATH, CString(CA2W(directory.c_str(), CP_ACP)));
+    SetDlgItemText(IDC_BATCH_COUNT, L"0");
+    SetDlgItemText(IDC_BATCH_THREADS, L"20");
+    OnBatchRun();
+    CString statistics;
+    GetDlgItemText(IDC_BATCH_STATS, statistics);
+    require(statistics.Find(L"总数 197，成功 197，失败 0") >= 0,
+            "对话框批量评估未通过 197 对数据");
+    DestroyWindow();
 }

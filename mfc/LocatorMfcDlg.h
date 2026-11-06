@@ -8,9 +8,13 @@
 #include <afxwin.h>
 #include <opencv2/core.hpp>
 
+#include <string>
+
 class CLocatorMfcDlg : public CDialogEx {
 public:
     explicit CLocatorMfcDlg(CWnd* parent = nullptr);
+    void runSelfTest(const std::string& directory, const cv::Mat& model,
+                     const cv::Mat& search, LocatorBackend backend);
 
 protected:
     BOOL OnInitDialog() override;
@@ -27,6 +31,7 @@ protected:
 private:
     bool readConfig(LocatorConfig& config);
     void prepareResultList(bool batch);
+    void clearResultDisplay();
     void showError(LocatorError error);
 
     cv::Mat searchImage_;

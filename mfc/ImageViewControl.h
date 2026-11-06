@@ -16,6 +16,7 @@ public:
     void setSelectionEnabled(bool enabled);
     void clearSelection();
     cv::Rect selectedRect() const;
+    bool hasResults() const { return !results_.empty(); }
 
 protected:
     afx_msg void OnPaint();

@@ -65,6 +65,8 @@ int runSelfTest(const std::string& directory)
             if (backendIndex == 0) {
                 reference = std::move(batch);
             }
+            CLocatorMfcDlg dialog;
+            dialog.runSelfTest(directory, data.models[0], data.searches[0], config.backend);
             std::cout << (backendIndex == 0 ? "CPU" : "GPU")
                       << "：单次整体 " << single.totalMs << " ms，197 对批量 "
                       << wallMs << " ms\n";
