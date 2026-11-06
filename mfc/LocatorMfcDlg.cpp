@@ -83,6 +83,8 @@ BEGIN_MESSAGE_MAP(CLocatorMfcDlg, CDialogEx)
     ON_WM_ERASEBKGND()
     ON_WM_CTLCOLOR()
     ON_WM_DRAWITEM()
+    ON_WM_SIZE()
+    ON_WM_GETMINMAXINFO()
 END_MESSAGE_MAP()
 
 BOOL CLocatorMfcDlg::OnInitDialog()
@@ -139,7 +141,126 @@ BOOL CLocatorMfcDlg::OnInitDialog()
     SetDlgItemText(IDC_SEARCH_PATH, L"未加载搜索图");
     SetDlgItemText(IDC_TEMPLATE_PATH, L"未加载模板");
     SetDlgItemText(IDC_STATUS_TEXT, L"就绪：请加载搜索图和模板");
+    captureInitialLayout();
     return TRUE;
+}
+
+void CLocatorMfcDlg::captureInitialLayout()
+{
+    CRect client;
+    CRect window;
+    GetClientRect(&client);
+    GetWindowRect(&window);
+    initialClientSize_ = CSize(client.Width(), client.Height());
+    minimumWindowSize_ = CSize(window.Width(), window.Height());
+    initialControls_.clear();
+    for (CWnd* child = GetWindow(GW_CHILD); child != nullptr; child = child->GetNextWindow()) {
+        CRect rect;
+        child->GetWindowRect(&rect);
+        ScreenToClient(&rect);
+        initialControls_.push_back({ child->GetSafeHwnd(), rect });
+    }
+}
+
+void CLocatorMfcDlg::applyLayout()
+{
+    const auto originalRect = [this](int id) {
+        const HWND hwnd = GetDlgItem(id)->GetSafeHwnd();
+        for (const auto& entry : initialControls_) {
+            if (entry.first == hwnd) {
+                return entry.second;
+            }
+        }
+        throw std::runtime_error("找不到控件的初始布局");
+    };
+    const CRect workspacePanel = originalRect(IDC_PANEL_WORKSPACE);
+    const CRect parametersPanel = originalRect(IDC_PANEL_PARAMETERS);
+    const CRect resultsPanel = originalRect(IDC_PANEL_RESULTS);
+    const CRect batchPanel = originalRect(IDC_PANEL_BATCH);
+    const CRect templateView = originalRect(IDC_TEMPLATE_VIEW);
+
+    CRect client;
+    GetClientRect(&client);
+    const int dx = client.Width() - initialClientSize_.cx;
+    const int dy = client.Height() - initialClientSize_.cy;
+    const int workspaceDelta = dy * 3 / 5;
+    HDWP deferred = BeginDeferWindowPos(static_cast<int>(initialControls_.size()));
+    if (deferred == nullptr) {
+        return;
+    }
+    for (const auto& entry : initialControls_) {
+        CRect rect = entry.second;
+        const int id = ::GetDlgCtrlID(entry.first);
+        const bool rightSide = rect.left >= parametersPanel.left;
+        const bool templateColumn = !rightSide && rect.left >= templateView.left &&
+            rect.top < workspacePanel.bottom;
+        const bool batch = rightSide && rect.top >= batchPanel.top;
+        const bool parameters = rightSide && !batch;
+        const bool results = !rightSide && rect.top >= resultsPanel.top;
+        const bool workspace = !rightSide && rect.top >= workspacePanel.top &&
+            rect.top < resultsPanel.top;
+
+        if (rightSide || templateColumn) {
+            rect.OffsetRect(dx, 0);
+        } else if (id == IDC_PANEL_WORKSPACE || id == IDC_SEARCH_VIEW ||
+                   id == IDC_SEARCH_PATH || id == IDC_STATUS_TEXT ||
+                   id == IDC_PANEL_RESULTS || id == IDC_RESULT_LIST) {
+            rect.right += dx;
+        }
+
+        if (batch) {
+            rect.OffsetRect(0, dy);
+        } else if (parameters) {
+            if (id == IDC_PANEL_PARAMETERS) {
+                rect.bottom += dy;
+            } else if (id == IDC_EXECUTE) {
+                rect.OffsetRect(0, dy);
+            }
+        } else if (results) {
+            rect.top += workspaceDelta;
+            if (id == IDC_PANEL_RESULTS || id == IDC_RESULT_LIST) {
+                rect.bottom += dy;
+            } else {
+                rect.bottom += workspaceDelta;
+            }
+        } else if (workspace) {
+            if (id == IDC_PANEL_WORKSPACE) {
+                rect.bottom += workspaceDelta;
+            } else if (id == IDC_SEARCH_VIEW || id == IDC_TEMPLATE_VIEW) {
+                rect.bottom += workspaceDelta;
+            } else if (id == IDC_SEARCH_PATH || id == IDC_TEMPLATE_PATH ||
+                       id == IDC_STATUS_TEXT) {
+                rect.OffsetRect(0, workspaceDelta);
+            }
+        }
+        HDWP next = DeferWindowPos(deferred, entry.first, nullptr,
+                                   rect.left, rect.top, rect.Width(), rect.Height(),
+                                   SWP_NOZORDER | SWP_NOACTIVATE);
+        if (next == nullptr) {
+            EndDeferWindowPos(deferred);
+            return;
+        }
+        deferred = next;
+    }
+    EndDeferWindowPos(deferred);
+    resizeResultColumns();
+}
+
+void CLocatorMfcDlg::OnSize(UINT type, int width, int height)
+{
+    CDialogEx::OnSize(type, width, height);
+    if (type != SIZE_MINIMIZED && !initialControls_.empty()) {
+        applyLayout();
+    }
+}
+
+void CLocatorMfcDlg::OnGetMinMaxInfo(MINMAXINFO* info)
+{
+    CDialogEx::OnGetMinMaxInfo(info);
+    if (minimumWindowSize_.cx > 0 && minimumWindowSize_.cy > 0) {
+        info->ptMinTrackSize.x = minimumWindowSize_.cx;
+        info->ptMinTrackSize.y = minimumWindowSize_.cy;
+    }
 }
 
 BOOL CLocatorMfcDlg::OnEraseBkgnd(CDC* dc)
@@ -428,21 +549,30 @@ void CLocatorMfcDlg::prepareResultList(bool batch)
     while (header != nullptr && header->GetItemCount() > 0) {
         resultsList_.DeleteColumn(0);
     }
+    const wchar_t* batchTitles[] = { L"任务", L"失败原因", L"预处理 ms", L"搜索 ms", L"整体 ms" };
+    const wchar_t* singleTitles[] = { L"x", L"y", L"角度", L"尺度", L"分数" };
+    const wchar_t** titles = batch ? batchTitles : singleTitles;
+    for (int column = 0; column < 5; ++column) {
+        resultsList_.InsertColumn(column, titles[column], LVCFMT_LEFT, 100);
+    }
+    batchResults_ = batch;
+    resizeResultColumns();
+}
+
+void CLocatorMfcDlg::resizeResultColumns()
+{
+    CHeaderCtrl* header = resultsList_.GetHeaderCtrl();
+    if (header == nullptr || header->GetItemCount() != 5) {
+        return;
+    }
     CRect client;
     resultsList_.GetClientRect(&client);
     const int width = client.Width();
-    if (batch) {
-        resultsList_.InsertColumn(0, L"任务", LVCFMT_LEFT, width * 12 / 100);
-        resultsList_.InsertColumn(1, L"失败原因", LVCFMT_LEFT, width * 36 / 100);
-        resultsList_.InsertColumn(2, L"预处理 ms", LVCFMT_LEFT, width * 17 / 100);
-        resultsList_.InsertColumn(3, L"搜索 ms", LVCFMT_LEFT, width * 17 / 100);
-        resultsList_.InsertColumn(4, L"整体 ms", LVCFMT_LEFT, width * 18 / 100);
-    } else {
-        resultsList_.InsertColumn(0, L"x", LVCFMT_LEFT, width * 20 / 100);
-        resultsList_.InsertColumn(1, L"y", LVCFMT_LEFT, width * 20 / 100);
-        resultsList_.InsertColumn(2, L"角度", LVCFMT_LEFT, width * 18 / 100);
-        resultsList_.InsertColumn(3, L"尺度", LVCFMT_LEFT, width * 18 / 100);
-        resultsList_.InsertColumn(4, L"分数", LVCFMT_LEFT, width * 24 / 100);
+    const int batchWidths[] = { 12, 36, 17, 17, 18 };
+    const int singleWidths[] = { 20, 20, 18, 18, 24 };
+    const int* percentages = batchResults_ ? batchWidths : singleWidths;
+    for (int column = 0; column < 5; ++column) {
+        resultsList_.SetColumnWidth(column, width * percentages[column] / 100);
     }
 }
 
@@ -613,6 +743,14 @@ void CLocatorMfcDlg::runSelfTest(const std::string& directory, const cv::Mat& mo
     require((GetDlgItem(IDC_EXECUTE)->GetStyle() & BS_TYPEMASK) == BS_OWNERDRAW &&
             (GetDlgItem(IDC_BATCH_RUN)->GetStyle() & BS_TYPEMASK) == BS_OWNERDRAW,
             "主要操作按钮缺少统一的自绘样式");
+    const DWORD windowStyle = GetStyle();
+    require((windowStyle & WS_THICKFRAME) != 0 &&
+            (windowStyle & WS_MAXIMIZEBOX) != 0,
+            "主窗口缺少可调整边框或最大化按钮");
+    MINMAXINFO limits = {};
+    SendMessage(WM_GETMINMAXINFO, 0, reinterpret_cast<LPARAM>(&limits));
+    require(limits.ptMinTrackSize.x > 0 && limits.ptMinTrackSize.y > 0,
+            "主窗口没有设置最小布局尺寸");
 
     CRect client;
     GetClientRect(&client);
@@ -695,6 +833,44 @@ void CLocatorMfcDlg::runSelfTest(const std::string& directory, const cv::Mat& mo
         throw std::runtime_error("对话框单次结果实际为：" +
                                  std::string(CT2A(actual.GetString(), CP_UTF8)));
     }
+
+    CRect originalWindow;
+    GetWindowRect(&originalWindow);
+    const CRect originalSearch = controlRect(IDC_SEARCH_VIEW);
+    const CRect originalResults = controlRect(IDC_RESULT_LIST);
+    const CRect originalParameters = controlRect(IDC_PANEL_PARAMETERS);
+    const CRect originalExecute = controlRect(IDC_EXECUTE);
+    const int resultCount = resultsList_.GetItemCount();
+    const CString firstResult = resultsList_.GetItemText(0, 0);
+    const int rightMargin = client.right - originalParameters.right;
+    SetWindowPos(nullptr, 0, 0, originalWindow.Width() + 240, originalWindow.Height() + 120,
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    GetClientRect(&client);
+    require(controlRect(IDC_SEARCH_VIEW).Width() > originalSearch.Width() &&
+            controlRect(IDC_SEARCH_VIEW).Height() > originalSearch.Height(),
+            "窗口放大后搜索图像区没有扩大");
+    require(controlRect(IDC_RESULT_LIST).Width() > originalResults.Width() &&
+            controlRect(IDC_RESULT_LIST).Height() > originalResults.Height(),
+            "窗口放大后结果列表没有扩大");
+    require(controlRect(IDC_PANEL_PARAMETERS).right == client.right - rightMargin &&
+            controlRect(IDC_EXECUTE).top > originalExecute.top,
+            "右侧参数卡片或执行按钮没有跟随窗口");
+    require(resultsList_.GetItemCount() == resultCount &&
+            resultsList_.GetItemText(0, 0) == firstResult && searchView_.hasResults(),
+            "窗口缩放后匹配结果被清除");
+    resultsList_.GetClientRect(&listClient);
+    columnWidth = 0;
+    for (int column = 0; column < 5; ++column) {
+        columnWidth += resultsList_.GetColumnWidth(column);
+    }
+    require(columnWidth >= listClient.Width() * 9 / 10,
+            "窗口缩放后结果列没有跟随列表宽度");
+    SetWindowPos(nullptr, 0, 0, originalWindow.Width(), originalWindow.Height(),
+                 SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    require(controlRect(IDC_SEARCH_VIEW) == originalSearch &&
+            controlRect(IDC_RESULT_LIST) == originalResults,
+            "窗口还原后布局没有恢复");
+
     if (previewPath != nullptr && *previewPath != L'\0') {
         savePreview(previewPath);
     }

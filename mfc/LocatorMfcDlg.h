@@ -9,6 +9,8 @@
 #include <opencv2/core.hpp>
 
 #include <string>
+#include <utility>
+#include <vector>
 
 class CLocatorMfcDlg : public CDialogEx {
 public:
@@ -32,10 +34,15 @@ protected:
     afx_msg BOOL OnEraseBkgnd(CDC* dc);
     afx_msg HBRUSH OnCtlColor(CDC* dc, CWnd* wnd, UINT ctlColor);
     afx_msg void OnDrawItem(int controlId, LPDRAWITEMSTRUCT drawItem);
+    afx_msg void OnSize(UINT type, int width, int height);
+    afx_msg void OnGetMinMaxInfo(MINMAXINFO* info);
 
 private:
     bool readConfig(LocatorConfig& config);
     void prepareResultList(bool batch);
+    void resizeResultColumns();
+    void captureInitialLayout();
+    void applyLayout();
     void clearResultDisplay();
     void showError(LocatorError error);
     void savePreview(const wchar_t* path);
@@ -48,6 +55,10 @@ private:
     CComboBox backendCombo_;
     CFont titleFont_;
     CFont sectionFont_;
+    std::vector<std::pair<HWND, CRect>> initialControls_;
+    CSize initialClientSize_ = CSize(0, 0);
+    CSize minimumWindowSize_ = CSize(0, 0);
+    bool batchResults_ = false;
     bool selectionForRoi_ = false;
     bool useRoi_ = false;
     LocatorRect roi_ = { 0, 0, 0, 0 };
