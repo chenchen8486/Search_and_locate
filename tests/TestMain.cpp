@@ -1,6 +1,8 @@
 #include "Locator.h"
 #include "TestSupport.h"
 
+#include <windows.h>
+
 #include <exception>
 #include <iostream>
 #include <string>
@@ -116,7 +118,21 @@ void testBackendGpuUnavailable()
 }
 #endif
 
+bool shouldWaitForConsole(int argumentCount, DWORD consoleProcessCount)
+{
+    return argumentCount == 1 && consoleProcessCount == 1;
+}
+
+void testConsoleDoubleClickHold()
+{
+    expect(shouldWaitForConsole(1, 1), "双击独立控制台应在测试后等待");
+    expect(!shouldWaitForConsole(3, 1), "带测试参数的自动化命令不应等待");
+    expect(!shouldWaitForConsole(1, 2), "已有终端中的运行不应等待");
+    expect(!shouldWaitForConsole(1, 0), "无控制台环境不应等待");
+}
+
 const TestCase tests[] = {
+    { "Console.DoubleClickHold", testConsoleDoubleClickHold },
 #ifndef LOCATOR_WITH_CUDA
     { "Backend.GpuUnavailable", testBackendGpuUnavailable },
 #endif
@@ -260,5 +276,12 @@ int main(int argc, char* argv[])
     }
 
     std::cout << "测试结果：" << passed << "/" << selected << " 通过\n";
-    return passed == selected ? 0 : 1;
+    const int status = passed == selected ? 0 : 1;
+    DWORD consoleProcesses[2] = {};
+    const DWORD consoleProcessCount = GetConsoleProcessList(consoleProcesses, 2);
+    if (shouldWaitForConsole(argc, consoleProcessCount)) {
+        std::cout << "\n测试已结束，按回车键关闭窗口。\n";
+        std::cin.get();
+    }
+    return status;
 }
