@@ -1,8 +1,15 @@
 #pragma once
 
 #include "Locator.h"
+#include "TransformSearch.h"
 
 #include <opencv2/core.hpp>
+
+struct Locator::State {
+    cv::Mat model;
+    LocatorConfig config;
+    std::vector<TransformSearch::TransformModel> models;
+};
 
 namespace locator_internal {
 

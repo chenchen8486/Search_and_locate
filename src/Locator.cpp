@@ -12,12 +12,6 @@
 #include <opencv2/core.hpp>
 #include <stdexcept>
 
-struct Locator::State {
-    cv::Mat model;
-    LocatorConfig config;
-    std::vector<TransformSearch::TransformModel> models;
-};
-
 Locator::Locator() = default;
 
 LocatorError Locator::initialize(const LocatorImage& model, const LocatorConfig& config)

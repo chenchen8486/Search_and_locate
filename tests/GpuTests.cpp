@@ -1,5 +1,6 @@
 #define _CRT_SECURE_NO_WARNINGS
 #include "BatchLocator.h"
+#include "gpu/CudaMatcher.h"
 #include "Locator.h"
 #include "NccMatcher.h"
 #include "TestSupport.h"
@@ -205,4 +206,39 @@ void testGpuUnavailable()
 void testGpuPerformanceBenchmark500()
 {
     runPerformanceBenchmark500(LocatorBackend::Gpu);
+}
+
+void testGpuBatchResponseEquivalence()
+{
+    std::vector<cv::Mat> owned;
+    std::vector<CudaMatcher::BatchInput> inputs;
+    for (int index = 0; index < 3; ++index) {
+        cv::Mat model = makeTexturedImage(12 + index, 10 + index,
+                                          16500 + static_cast<unsigned int>(index));
+        cv::Mat search = makeTexturedImage(70 + index * 3, 60 + index * 2,
+                                           16600 + static_cast<unsigned int>(index));
+        model.copyTo(search(cv::Rect(10 + index, 12, model.cols, model.rows)));
+        cv::Mat padded(search.rows, search.cols + 7, CV_8UC1, cv::Scalar(0));
+        search.copyTo(padded(cv::Rect(0, 0, search.cols, search.rows)));
+        owned.push_back(model);
+        owned.push_back(padded);
+        inputs.push_back({ owned[owned.size() - 1](cv::Rect(0, 0, search.cols, search.rows)),
+                           owned[owned.size() - 2] });
+    }
+    const cv::Mat constant(70, 60, CV_8UC1, cv::Scalar(127));
+    inputs.push_back({ constant, inputs[0].model });
+    const std::vector<cv::Mat> actual = CudaMatcher::matchBatch(inputs);
+    expect(actual.size() == inputs.size(), "GPU 批量响应数量错误");
+    for (size_t index = 0; index < inputs.size(); ++index) {
+        const cv::Mat expected = NccMatcher::match(inputs[index].search, inputs[index].model,
+                                                    LocatorBackend::Gpu);
+        expect(actual[index].size() == expected.size() && actual[index].type() == expected.type(),
+               "GPU 批量响应尺寸或类型错误");
+        if (expected.empty()) {
+            expect(actual[index].empty(), "GPU 批量常量搜索图必须返回空响应");
+            continue;
+        }
+        expect(cv::norm(actual[index], expected, cv::NORM_INF) == 0.0,
+               "GPU 批量与单任务响应不完全一致，索引 " + std::to_string(index));
+    }
 }

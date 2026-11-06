@@ -60,6 +60,10 @@ struct LocatorResult {
     double score;
 };
 
+namespace locator_internal {
+struct BatchExecutor;
+}
+
 class Locator {
 public:
     Locator();
@@ -68,6 +72,7 @@ public:
                          std::vector<LocatorResult>& results) const;
 
 private:
+    friend struct locator_internal::BatchExecutor;
     struct State;
     std::shared_ptr<State> state_;
 };

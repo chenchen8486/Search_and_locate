@@ -55,6 +55,7 @@ void testGpuParallelEquivalence();
 void testGpuSyntheticFixedSeed100();
 void testGpuRealDataAll197();
 void testGpuPerformanceBenchmark500();
+void testGpuBatchResponseEquivalence();
 void exportRealBaseline();
 
 namespace {
@@ -185,6 +186,7 @@ const TestCase tests[] = {
     { "Gpu.ConstantSearchWindow", testGpuConstantSearchWindow },
     { "Gpu.Unavailable", testGpuUnavailable },
     { "Gpu.Performance500", testGpuPerformanceBenchmark500 },
+    { "Gpu.BatchResponseEquivalence", testGpuBatchResponseEquivalence },
     { "MfcWorkflow.SingleSearch", testMfcWorkflowSingleSearch },
     { "MfcWorkflow.BatchTiming", testMfcWorkflowBatchTiming }
 };

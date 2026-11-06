@@ -273,11 +273,10 @@ std::vector<double> scoreSubpixelSamples(const cv::Mat& patch,
     return scores;
 }
 
-std::vector<Candidate> searchAngles(const std::vector<TransformModel>& models,
-                                    const cv::Mat& search,
-                                    const LocatorConfig& config)
+void appendModelCandidates(const TransformModel& model, const cv::Mat& search,
+                           const LocatorConfig& config, const cv::Mat& response,
+                           std::vector<Candidate>& candidates)
 {
-    std::vector<Candidate> candidates;
     std::vector<double> offsets;
     const int resolution = config.subPixelResolution;
     const int half = resolution > 1 ? resolution / 2 : 0;
@@ -285,70 +284,77 @@ std::vector<Candidate> searchAngles(const std::vector<TransformModel>& models,
         offsets.push_back(static_cast<double>(step) / resolution);
     }
 
-    for (const TransformModel& model : models) {
-        const std::vector<SubpixelSample> sampledModels =
-            makeSubpixelSamples(model.image, resolution);
-        const cv::Mat response = NccMatcher::match(search, model.image, config.backend);
-        std::vector<Candidate> coarseCandidates;
-        for (int y = 0; y < response.rows; ++y) {
-            for (int x = 0; x < response.cols; ++x) {
-                const float value = response.at<float>(y, x);
-                if (!std::isfinite(value)) {
-                    continue;
-                }
-                bool localMaximum = true;
-                for (int neighborY = std::max(0, y - 1);
-                     neighborY <= std::min(response.rows - 1, y + 1); ++neighborY) {
-                    for (int neighborX = std::max(0, x - 1);
-                         neighborX <= std::min(response.cols - 1, x + 1); ++neighborX) {
-                        if (response.at<float>(neighborY, neighborX) > value) {
-                            localMaximum = false;
-                        }
+    const std::vector<SubpixelSample> sampledModels = makeSubpixelSamples(model.image, resolution);
+    std::vector<Candidate> coarseCandidates;
+    for (int y = 0; y < response.rows; ++y) {
+        for (int x = 0; x < response.cols; ++x) {
+            const float value = response.at<float>(y, x);
+            if (!std::isfinite(value)) {
+                continue;
+            }
+            bool localMaximum = true;
+            for (int neighborY = std::max(0, y - 1);
+                 neighborY <= std::min(response.rows - 1, y + 1); ++neighborY) {
+                for (int neighborX = std::max(0, x - 1);
+                     neighborX <= std::min(response.cols - 1, x + 1); ++neighborX) {
+                    if (response.at<float>(neighborY, neighborX) > value) {
+                        localMaximum = false;
                     }
                 }
-                const double score = std::max(0.0, static_cast<double>(value)) * 100.0;
-                if (!localMaximum || score < config.minScore) {
-                    continue;
-                }
-                coarseCandidates.push_back({ static_cast<double>(x), static_cast<double>(y),
-                                             model.angle, model.scale, score });
             }
+            const double score = std::max(0.0, static_cast<double>(value)) * 100.0;
+            if (!localMaximum || score < config.minScore) {
+                continue;
+            }
+            coarseCandidates.push_back({ static_cast<double>(x), static_cast<double>(y),
+                                         model.angle, model.scale, score });
         }
+    }
 
-        coarseCandidates = ResultRefiner::selectResults(coarseCandidates, config);
-        for (const Candidate& coarse : coarseCandidates) {
-            const cv::Point point(static_cast<int>(coarse.x), static_cast<int>(coarse.y));
-            const cv::Point2d fitted = ResultRefiner::refineSubPixel(response, point, resolution);
-            Candidate candidate;
-            candidate.x = fitted.x + (model.image.cols - 1) / 2.0;
-            candidate.y = fitted.y + (model.image.rows - 1) / 2.0;
-            candidate.angle = model.angle;
-            candidate.scale = model.scale;
-            candidate.score = coarse.score;
-            const cv::Mat patch = search(cv::Rect(point.x, point.y, model.image.cols, model.image.rows));
-            const std::vector<double> sampledScores = scoreSubpixelSamples(patch, sampledModels);
-            const double bestScore = *std::max_element(sampledScores.begin(), sampledScores.end());
-            double verifiedScore = -2.0;
-            for (size_t index = 0; index < sampledScores.size(); ++index) {
-                if (bestScore - sampledScores[index] > 1e-3) {
-                    continue;
-                }
-                const cv::Mat sampledResponse = NccMatcher::match(patch, sampledModels[index].image);
-                if (sampledResponse.empty()) {
-                    continue;
-                }
-                const float sampledValue = sampledResponse.at<float>(0, 0);
-                if (std::isfinite(sampledValue) && sampledValue > verifiedScore) {
-                    verifiedScore = sampledValue;
-                    candidate.x = point.x + offsets[index % offsets.size()] +
-                                  (model.image.cols - 1) / 2.0;
-                    candidate.y = point.y + offsets[index / offsets.size()] +
-                                  (model.image.rows - 1) / 2.0;
-                    candidate.score = std::max(0.0, static_cast<double>(sampledValue)) * 100.0;
-                }
+    coarseCandidates = ResultRefiner::selectResults(coarseCandidates, config);
+    for (const Candidate& coarse : coarseCandidates) {
+        const cv::Point point(static_cast<int>(coarse.x), static_cast<int>(coarse.y));
+        const cv::Point2d fitted = ResultRefiner::refineSubPixel(response, point, resolution);
+        Candidate candidate;
+        candidate.x = fitted.x + (model.image.cols - 1) / 2.0;
+        candidate.y = fitted.y + (model.image.rows - 1) / 2.0;
+        candidate.angle = model.angle;
+        candidate.scale = model.scale;
+        candidate.score = coarse.score;
+        const cv::Mat patch = search(cv::Rect(point.x, point.y, model.image.cols, model.image.rows));
+        const std::vector<double> sampledScores = scoreSubpixelSamples(patch, sampledModels);
+        const double bestScore = *std::max_element(sampledScores.begin(), sampledScores.end());
+        double verifiedScore = -2.0;
+        for (size_t index = 0; index < sampledScores.size(); ++index) {
+            if (bestScore - sampledScores[index] > 1e-3) {
+                continue;
             }
-            candidates.push_back(candidate);
+            const cv::Mat sampledResponse = NccMatcher::match(patch, sampledModels[index].image);
+            if (sampledResponse.empty()) {
+                continue;
+            }
+            const float sampledValue = sampledResponse.at<float>(0, 0);
+            if (std::isfinite(sampledValue) && sampledValue > verifiedScore) {
+                verifiedScore = sampledValue;
+                candidate.x = point.x + offsets[index % offsets.size()] +
+                              (model.image.cols - 1) / 2.0;
+                candidate.y = point.y + offsets[index / offsets.size()] +
+                              (model.image.rows - 1) / 2.0;
+                candidate.score = std::max(0.0, static_cast<double>(sampledValue)) * 100.0;
+            }
         }
+        candidates.push_back(candidate);
+    }
+}
+
+std::vector<Candidate> searchAngles(const std::vector<TransformModel>& models,
+                                    const cv::Mat& search,
+                                    const LocatorConfig& config)
+{
+    std::vector<Candidate> candidates;
+    for (const TransformModel& model : models) {
+        const cv::Mat response = NccMatcher::match(search, model.image, config.backend);
+        appendModelCandidates(model, search, config, response, candidates);
     }
     return candidates;
 }

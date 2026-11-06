@@ -3,6 +3,7 @@
 #include <opencv2/core.hpp>
 
 #include <stdexcept>
+#include <vector>
 
 namespace CudaMatcher {
 
@@ -16,7 +17,13 @@ public:
     explicit Failure(const char* message) : std::runtime_error(message) {}
 };
 
+struct BatchInput {
+    cv::Mat search;
+    cv::Mat model;
+};
+
 bool isAvailable();
 cv::Mat match(const cv::Mat& search, const cv::Mat& model);
+std::vector<cv::Mat> matchBatch(const std::vector<BatchInput>& inputs);
 
 } // namespace CudaMatcher
