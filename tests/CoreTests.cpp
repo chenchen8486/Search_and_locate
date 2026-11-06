@@ -605,3 +605,16 @@ void testTransformLinearShift()
         }
     }
 }
+
+void testNccConstantSearchWindow()
+{
+    const cv::Mat model = makeTexturedImage(12, 10, 17001);
+    cv::Mat search(40, 40, CV_8UC1, cv::Scalar(127));
+    cv::Mat textured = makeTexturedImage(40, 40, 17002);
+    textured(cv::Rect(0, 0, 20, 40)).copyTo(search(cv::Rect(0, 0, 20, 40)));
+    const cv::Mat response = NccMatcher::match(search, model);
+    expect(!response.empty() && std::isfinite(response.at<float>(0, 25)),
+           "混合搜索图的 NCC 响应应有效");
+    expect(response.at<float>(0, 25) == 0.0f,
+           "常量搜索窗口的零方差 NCC 应为 0，不能产生虚假高分");
+}

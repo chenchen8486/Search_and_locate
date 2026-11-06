@@ -2,24 +2,18 @@
 
 #include "BatchData.h"
 #include "BatchLocator.h"
+#include "LocatorWorkflow.h"
 #include "resource.h"
 
 #include <afxdlgs.h>
 #include <atlconv.h>
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
 #include <string>
 
 namespace {
-
-LocatorImage asLocatorImage(const cv::Mat& image)
-{
-    LocatorImage view = { image.data, image.cols, image.rows, static_cast<int>(image.step) };
-    return view;
-}
 
 bool readDouble(CWnd* window, int id, double& value)
 {
@@ -94,6 +88,10 @@ BOOL CLocatorMfcDlg::OnInitDialog()
     templateView_.SubclassDlgItem(IDC_TEMPLATE_VIEW, this);
     resultsList_.SubclassDlgItem(IDC_RESULT_LIST, this);
     resultsList_.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
+    backendCombo_.SubclassDlgItem(IDC_BACKEND, this);
+    backendCombo_.AddString(L"CPU");
+    backendCombo_.AddString(L"GPU");
+    backendCombo_.SetCurSel(0);
     prepareResultList(false);
 
     SetDlgItemText(IDC_ANGLE_MIN, L"0");
@@ -217,6 +215,7 @@ LRESULT CLocatorMfcDlg::OnImageSelectionChanged(WPARAM wParam, LPARAM lParam)
 
 bool CLocatorMfcDlg::readConfig(LocatorConfig& config)
 {
+    config.backend = backendCombo_.GetCurSel() == 1 ? LocatorBackend::Gpu : LocatorBackend::Cpu;
     const std::pair<int, double*> doubleFields[] = {
         { IDC_ANGLE_MIN, &config.angleMinDeg },
         { IDC_ANGLE_MAX, &config.angleMaxDeg },
@@ -271,21 +270,13 @@ void CLocatorMfcDlg::OnExecute()
         config.roi = roi_;
     }
 
-    Locator locator;
-    std::vector<LocatorResult> results;
-    const auto start = std::chrono::steady_clock::now();
-    const LocatorError initializeError = locator.initialize(asLocatorImage(modelImage_), config);
-    const auto initialized = std::chrono::steady_clock::now();
-    if (initializeError != LocatorError::Ok) {
-        showError(initializeError);
+    const LocatorWorkflow::SingleResult run =
+        LocatorWorkflow::runSingle(modelImage_, searchImage_, config);
+    if (run.error != LocatorError::Ok) {
+        showError(run.error);
         return;
     }
-    const LocatorError executeError = locator.execute(asLocatorImage(searchImage_), results);
-    const auto finished = std::chrono::steady_clock::now();
-    if (executeError != LocatorError::Ok) {
-        showError(executeError);
-        return;
-    }
+    const std::vector<LocatorResult>& results = run.matches;
 
     prepareResultList(false);
     for (size_t i = 0; i < results.size(); ++i) {
@@ -304,9 +295,9 @@ void CLocatorMfcDlg::OnExecute()
     }
     searchView_.setResults(results, modelImage_.cols, modelImage_.rows);
 
-    const double preprocessMs = std::chrono::duration<double, std::milli>(initialized - start).count();
-    const double searchMs = std::chrono::duration<double, std::milli>(finished - initialized).count();
-    const double totalMs = std::chrono::duration<double, std::milli>(finished - start).count();
+    const double preprocessMs = run.preprocessMs;
+    const double searchMs = run.searchMs;
+    const double totalMs = run.totalMs;
     CString status;
     status.Format(L"预处理 %.3f ms，搜索 %.3f ms，整体 %.3f ms，共 %d 个结果",
                   preprocessMs, searchMs, totalMs, static_cast<int>(results.size()));
@@ -381,10 +372,8 @@ void CLocatorMfcDlg::OnBatchRun()
         for (BatchTask& task : data.tasks) {
             task.config = config;
         }
-        const auto start = std::chrono::steady_clock::now();
-        const std::vector<BatchResult> results = executeBatch(data.tasks, threads);
-        const double wallMs = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - start).count();
+        std::vector<BatchResult> results;
+        const double wallMs = LocatorWorkflow::runBatch(data.tasks, threads, results);
 
         prepareResultList(true);
         double preprocessSum = 0.0;

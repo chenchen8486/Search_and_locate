@@ -54,7 +54,7 @@
       <WarningLevel>Level3</WarningLevel>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\include;$(ProjectDir)..\tools;$(ProjectDir)..\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\include;$(ProjectDir)..\tools;$(ProjectDir)..\src;$(ProjectDir)..\mfc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OpenMPSupport>true</OpenMPSupport>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -74,7 +74,7 @@
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;UNICODE;_UNICODE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>$(ProjectDir)..\include;$(ProjectDir)..\tools;$(ProjectDir)..\src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>$(ProjectDir)..\include;$(ProjectDir)..\tools;$(ProjectDir)..\src;$(ProjectDir)..\mfc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <OpenMPSupport>true</OpenMPSupport>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
@@ -97,6 +97,7 @@
     <ClCompile Include="SyntheticTests.cpp" />
     <ClCompile Include="PerformanceTests.cpp" />
     <ClCompile Include="GpuTests.cpp" />
+    <ClCompile Include="MfcWorkflowTests.cpp" />
     <ClCompile Include="..\src\Locator.cpp" />
     <ClCompile Include="..\src\BatchLocator.cpp" />
     <ClCompile Include="..\src\NccMatcher.cpp" />
@@ -104,6 +105,7 @@
     <ClCompile Include="..\src\TransformSearch.cpp" />
     <ClCompile Include="..\src\PyramidSearch.cpp" />
     <ClCompile Include="..\tools\BatchData.cpp" />
+    <ClCompile Include="..\mfc\LocatorWorkflow.cpp" />
   </ItemGroup>
   <ItemGroup Condition="'$(EnableCuda)' == 'true'">
     <CudaCompile Include="..\src\gpu\CudaMatcher.cu" />

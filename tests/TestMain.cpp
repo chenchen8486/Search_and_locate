@@ -12,6 +12,10 @@ void testNccExactLocation();
 void testNccSameSizeScore();
 void testNccPaddedStride();
 void testNccConstantInput();
+void testNccConstantSearchWindow();
+void testGpuConstantSearchWindow();
+void testMfcWorkflowSingleSearch();
+void testMfcWorkflowBatchTiming();
 void testRoiRestrictsSearch();
 void testRoiInvalidRejected();
 void testTopNScoreAndStableOrder();
@@ -103,6 +107,7 @@ const TestCase tests[] = {
     { "Ncc.SameSizeScore", testNccSameSizeScore },
     { "Ncc.PaddedStride", testNccPaddedStride },
     { "Ncc.ConstantInput", testNccConstantInput },
+    { "Ncc.ConstantSearchWindow", testNccConstantSearchWindow },
     { "Roi.RestrictsSearch", testRoiRestrictsSearch },
     { "Roi.InvalidRejected", testRoiInvalidRejected },
     { "TopN.ScoreAndStableOrder", testTopNScoreAndStableOrder },
@@ -134,7 +139,10 @@ const TestCase tests[] = {
     { "Gpu.ParallelEquivalence", testGpuParallelEquivalence },
     { "Gpu.Synthetic100", testGpuSyntheticFixedSeed100 },
     { "Gpu.RealData197", testGpuRealDataAll197 },
-    { "Gpu.Performance500", testGpuPerformanceBenchmark500 }
+    { "Gpu.ConstantSearchWindow", testGpuConstantSearchWindow },
+    { "Gpu.Performance500", testGpuPerformanceBenchmark500 },
+    { "MfcWorkflow.SingleSearch", testMfcWorkflowSingleSearch },
+    { "MfcWorkflow.BatchTiming", testMfcWorkflowBatchTiming }
 };
 
 bool isCoreTest(const std::string& name)
@@ -142,6 +150,7 @@ bool isCoreTest(const std::string& name)
     return name == "Config.Defaults" || name == "Image.EmptyRejected" ||
            name == "Execute.NotInitialized" || name == "Ncc.ExactLocation" ||
            name == "Ncc.SameSizeScore" || name == "Ncc.PaddedStride" || name == "Ncc.ConstantInput" ||
+           name == "Ncc.ConstantSearchWindow" ||
            name == "Roi.RestrictsSearch" || name == "Roi.InvalidRejected" ||
            name == "TopN.ScoreAndStableOrder" || name == "Vicinity.SuppressesDuplicates" ||
            name == "Angle.Sequence" || name == "Angle.Clockwise" ||

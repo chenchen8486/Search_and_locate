@@ -1,9 +1,10 @@
 #include "Locator.h"
 
 #include <iostream>
+#include <string>
 #include <vector>
 
-int main()
+int main(int argc, char* argv[])
 {
     const int searchWidth = 6;
     const int searchHeight = 5;
@@ -25,6 +26,12 @@ int main()
     LocatorImage model = { modelPixels.data(), 3, 2, 3 };
     LocatorImage search = { pixels.data(), searchWidth, searchHeight, searchWidth };
     LocatorConfig config;
+    if (argc == 2 && std::string(argv[1]) == "--gpu") {
+        config.backend = LocatorBackend::Gpu;
+    } else if (argc != 1) {
+        std::cerr << "用法：LocatorExample [--gpu]\n";
+        return 2;
+    }
     Locator locator;
 
     LocatorError error = locator.initialize(model, config);

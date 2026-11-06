@@ -1,10 +1,12 @@
 #include "BatchLocator.h"
 #include "Locator.h"
+#include "NccMatcher.h"
 #include "TestSupport.h"
 #include "TransformSearch.h"
 
 #include <opencv2/core.hpp>
 
+#include <cmath>
 #include <vector>
 
 namespace {
@@ -169,6 +171,18 @@ void testGpuSyntheticFixedSeed100()
 void testGpuRealDataAll197()
 {
     runRealDataAll197(LocatorBackend::Gpu, 1e-4);
+}
+
+void testGpuConstantSearchWindow()
+{
+    const cv::Mat model = makeTexturedImage(12, 10, 17003);
+    cv::Mat search = makeTexturedImage(40, 40, 17004);
+    search(cv::Rect(20, 0, 20, 40)).setTo(cv::Scalar(127));
+    const cv::Mat response = NccMatcher::match(search, model, LocatorBackend::Gpu);
+    expect(!response.empty() && std::isfinite(response.at<float>(0, 28)),
+           "GPU 混合搜索图的 NCC 响应应有效");
+    expect(response.at<float>(0, 28) == 0.0f,
+           "GPU 常量搜索窗口的零方差 NCC 应为 0");
 }
 
 void testGpuPerformanceBenchmark500()

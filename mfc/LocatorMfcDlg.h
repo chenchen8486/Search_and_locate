@@ -34,6 +34,7 @@ private:
     CImageViewControl searchView_;
     CImageViewControl templateView_;
     CListCtrl resultsList_;
+    CComboBox backendCombo_;
     bool selectionForRoi_ = false;
     bool useRoi_ = false;
     LocatorRect roi_ = { 0, 0, 0, 0 };

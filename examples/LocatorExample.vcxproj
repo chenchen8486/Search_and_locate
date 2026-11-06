@@ -36,6 +36,7 @@
   <ImportGroup Label="Shared" />
   <ImportGroup Label="PropertySheets">
     <Import Project="..\tools\OpenCV.props" />
+    <Import Project="..\tools\Cuda.props" />
   </ImportGroup>
   <ImportGroup Label="PropertySheets" Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <Import Project="$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props" Condition="exists('$(UserRootDir)\Microsoft.Cpp.$(Platform).user.props')" Label="LocalAppDataPlatform" />
@@ -94,6 +95,11 @@
     <ClCompile Include="..\src\TransformSearch.cpp" />
     <ClCompile Include="..\src\PyramidSearch.cpp" />
   </ItemGroup>
+  <ItemGroup Condition="'$(EnableCuda)' == 'true'">
+    <CudaCompile Include="..\src\gpu\CudaMatcher.cu" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-  <ImportGroup Label="ExtensionTargets" />
+  <ImportGroup Label="ExtensionTargets">
+    <Import Project="$(CudaTargetsPath)" Condition="'$(EnableCuda)' == 'true'" />
+  </ImportGroup>
 </Project>
