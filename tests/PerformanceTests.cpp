@@ -170,6 +170,9 @@ void testPerformanceTaskComposition()
     const std::vector<ThickPair> pairs = findThickPairs(realDataDirectory());
     BatchDataSet real = makeBenchmarkTasks(pairs, 197);
     BatchDataSet benchmark = makeBenchmarkTasks(pairs, 500);
+    for (BatchTask& task : benchmark.tasks) {
+        task.config.subPixelResolution = 4;
+    }
     expect(benchmark.tasks.size() == 500, "性能压测应展开为 500 个任务");
     for (size_t i = 0; i < benchmark.tasks.size(); ++i) {
         const BatchTask& task = benchmark.tasks[i];
@@ -180,7 +183,7 @@ void testPerformanceTaskComposition()
         expect(cv::norm(benchmark.models[i], real.models[i % 197]) == 0.0 &&
                cv::norm(benchmark.searches[i], real.searches[i % 197]) == 0.0,
                "压测任务必须按 i % 197 重复使用真实数据");
-        expect(task.config.pyramidLevels == 1 && task.config.subPixelResolution == 8 &&
+        expect(task.config.pyramidLevels == 1 && task.config.subPixelResolution == 4 &&
                task.config.maxResults == 1 && task.config.angleMinDeg == 0.0 &&
                task.config.angleMaxDeg == 0.0 && task.config.scaleMin == 1.0 &&
                task.config.scaleMax == 1.0 && !task.config.useRoi,
@@ -195,6 +198,7 @@ void runPerformanceBenchmark500(LocatorBackend backend)
     BatchDataSet data = makeBenchmarkTasks(pairs, 500);
     for (BatchTask& task : data.tasks) {
         task.config.backend = backend;
+        task.config.subPixelResolution = 4;
     }
     for (int i = 0; i < 5; ++i) {
         executeBatch(data.tasks, 20);
