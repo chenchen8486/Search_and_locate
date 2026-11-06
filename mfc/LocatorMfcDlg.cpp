@@ -7,6 +7,7 @@
 
 #include <afxdlgs.h>
 #include <atlconv.h>
+#include <atlimage.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -78,17 +79,41 @@ BEGIN_MESSAGE_MAP(CLocatorMfcDlg, CDialogEx)
     ON_BN_CLICKED(IDC_BATCH_BROWSE, &CLocatorMfcDlg::OnBatchBrowse)
     ON_BN_CLICKED(IDC_BATCH_RUN, &CLocatorMfcDlg::OnBatchRun)
     ON_MESSAGE(WM_IMAGE_SELECTION_CHANGED, &CLocatorMfcDlg::OnImageSelectionChanged)
+    ON_WM_PAINT()
+    ON_WM_ERASEBKGND()
+    ON_WM_CTLCOLOR()
+    ON_WM_DRAWITEM()
 END_MESSAGE_MAP()
 
 BOOL CLocatorMfcDlg::OnInitDialog()
 {
     CDialogEx::OnInitDialog();
-    SetWindowText(L"搜索匹配定位演示与评估");
+    SetWindowText(L"搜索匹配定位工具");
+    const int panelIds[] = {
+        IDC_PANEL_WORKSPACE, IDC_PANEL_PARAMETERS, IDC_PANEL_RESULTS, IDC_PANEL_BATCH
+    };
+    for (int id : panelIds) {
+        GetDlgItem(id)->ShowWindow(SW_HIDE);
+    }
+
+    LOGFONT font = {};
+    GetFont()->GetLogFont(&font);
+    font.lfWeight = FW_SEMIBOLD;
+    sectionFont_.CreateFontIndirectW(&font);
+    font.lfHeight = static_cast<LONG>(font.lfHeight * 1.65);
+    titleFont_.CreateFontIndirectW(&font);
+    GetDlgItem(IDC_APP_TITLE)->SetFont(&titleFont_);
+    const int sectionIds[] = {
+        IDC_SECTION_WORKSPACE, IDC_SECTION_PARAMETERS, IDC_SECTION_RESULTS, IDC_SECTION_BATCH
+    };
+    for (int id : sectionIds) {
+        GetDlgItem(id)->SetFont(&sectionFont_);
+    }
 
     searchView_.SubclassDlgItem(IDC_SEARCH_VIEW, this);
     templateView_.SubclassDlgItem(IDC_TEMPLATE_VIEW, this);
     resultsList_.SubclassDlgItem(IDC_RESULT_LIST, this);
-    resultsList_.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES | LVS_EX_DOUBLEBUFFER);
+    resultsList_.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
     backendCombo_.SubclassDlgItem(IDC_BACKEND, this);
     backendCombo_.AddString(L"CPU");
     backendCombo_.AddString(L"GPU");
@@ -110,11 +135,97 @@ BOOL CLocatorMfcDlg::OnInitDialog()
     SetDlgItemText(IDC_BATCH_COUNT, L"0");
     SetDlgItemText(IDC_BATCH_THREADS, L"20");
     SetDlgItemText(IDC_BATCH_PATH, L"");
-    SetDlgItemText(IDC_BATCH_STATS, L"批量结果列表仅显示失败任务");
+    SetDlgItemText(IDC_BATCH_STATS, L"尚未运行批量评估\r\n结果列表仅显示失败任务");
     SetDlgItemText(IDC_SEARCH_PATH, L"未加载搜索图");
     SetDlgItemText(IDC_TEMPLATE_PATH, L"未加载模板");
-    SetDlgItemText(IDC_STATUS_TEXT, L"请先加载搜索图和模板");
+    SetDlgItemText(IDC_STATUS_TEXT, L"就绪：请加载搜索图和模板");
     return TRUE;
+}
+
+BOOL CLocatorMfcDlg::OnEraseBkgnd(CDC* dc)
+{
+    CRect client;
+    GetClientRect(&client);
+    dc->FillSolidRect(&client, RGB(245, 247, 250));
+    return TRUE;
+}
+
+void CLocatorMfcDlg::OnPaint()
+{
+    CPaintDC dc(this);
+    const auto drawCard = [this, &dc](int id) {
+        CRect rect;
+        GetDlgItem(id)->GetWindowRect(&rect);
+        ScreenToClient(&rect);
+        CPen border(PS_SOLID, 1, RGB(224, 229, 236));
+        CBrush fill(RGB(255, 255, 255));
+        CPen* oldPen = dc.SelectObject(&border);
+        CBrush* oldBrush = dc.SelectObject(&fill);
+        dc.RoundRect(&rect, CPoint(12, 12));
+        dc.SelectObject(oldBrush);
+        dc.SelectObject(oldPen);
+    };
+    drawCard(IDC_PANEL_WORKSPACE);
+    drawCard(IDC_PANEL_PARAMETERS);
+    drawCard(IDC_PANEL_RESULTS);
+    drawCard(IDC_PANEL_BATCH);
+}
+
+HBRUSH CLocatorMfcDlg::OnCtlColor(CDC* dc, CWnd* wnd, UINT ctlColor)
+{
+    if (ctlColor == CTLCOLOR_STATIC && wnd != nullptr) {
+        const int id = wnd->GetDlgCtrlID();
+        dc->SetBkMode(TRANSPARENT);
+        if (id == IDC_STATUS_TEXT) {
+            dc->SetTextColor(RGB(37, 99, 235));
+        } else if (id == IDC_APP_SUBTITLE || id == IDC_WORKSPACE_HINT ||
+                   id == IDC_RESULT_HINT || id == IDC_SEARCH_PATH || id == IDC_TEMPLATE_PATH) {
+            dc->SetTextColor(RGB(107, 114, 128));
+        } else {
+            dc->SetTextColor(RGB(31, 41, 55));
+        }
+        return static_cast<HBRUSH>(::GetStockObject(HOLLOW_BRUSH));
+    }
+    return CDialogEx::OnCtlColor(dc, wnd, ctlColor);
+}
+
+void CLocatorMfcDlg::OnDrawItem(int controlId, LPDRAWITEMSTRUCT drawItem)
+{
+    if (drawItem->CtlType != ODT_BUTTON) {
+        CDialogEx::OnDrawItem(controlId, drawItem);
+        return;
+    }
+    const bool primary = controlId == IDC_EXECUTE || controlId == IDC_BATCH_RUN;
+    const bool pressed = (drawItem->itemState & ODS_SELECTED) != 0;
+    const bool disabled = (drawItem->itemState & ODS_DISABLED) != 0;
+    const COLORREF fill = disabled ? RGB(229, 231, 235) :
+        primary ? (pressed ? RGB(29, 78, 216) : RGB(37, 99, 235)) :
+        (pressed ? RGB(243, 244, 246) : RGB(255, 255, 255));
+    const COLORREF border = primary ? fill : RGB(209, 213, 219);
+
+    CDC dc;
+    dc.Attach(drawItem->hDC);
+    CPen outline(PS_SOLID, 1, border);
+    CBrush background(fill);
+    CPen* oldPen = dc.SelectObject(&outline);
+    CBrush* oldBrush = dc.SelectObject(&background);
+    dc.RoundRect(&drawItem->rcItem, CPoint(8, 8));
+    dc.SelectObject(oldBrush);
+    dc.SelectObject(oldPen);
+    dc.SetBkMode(TRANSPARENT);
+    dc.SetTextColor(disabled ? RGB(156, 163, 175) :
+                    primary ? RGB(255, 255, 255) : RGB(55, 65, 81));
+    CFont* oldFont = dc.SelectObject(&sectionFont_);
+    CString text;
+    GetDlgItemText(controlId, text);
+    dc.DrawText(text, &drawItem->rcItem, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    if ((drawItem->itemState & ODS_FOCUS) != 0) {
+        CRect focus = drawItem->rcItem;
+        focus.DeflateRect(4, 4);
+        dc.DrawFocusRect(&focus);
+    }
+    dc.SelectObject(oldFont);
+    dc.Detach();
 }
 
 void CLocatorMfcDlg::OnLoadSearch()
@@ -317,18 +428,21 @@ void CLocatorMfcDlg::prepareResultList(bool batch)
     while (header != nullptr && header->GetItemCount() > 0) {
         resultsList_.DeleteColumn(0);
     }
+    CRect client;
+    resultsList_.GetClientRect(&client);
+    const int width = client.Width();
     if (batch) {
-        resultsList_.InsertColumn(0, L"任务", LVCFMT_LEFT, 80);
-        resultsList_.InsertColumn(1, L"失败原因", LVCFMT_LEFT, 250);
-        resultsList_.InsertColumn(2, L"预处理 ms", LVCFMT_LEFT, 120);
-        resultsList_.InsertColumn(3, L"搜索 ms", LVCFMT_LEFT, 120);
-        resultsList_.InsertColumn(4, L"整体 ms", LVCFMT_LEFT, 120);
+        resultsList_.InsertColumn(0, L"任务", LVCFMT_LEFT, width * 12 / 100);
+        resultsList_.InsertColumn(1, L"失败原因", LVCFMT_LEFT, width * 36 / 100);
+        resultsList_.InsertColumn(2, L"预处理 ms", LVCFMT_LEFT, width * 17 / 100);
+        resultsList_.InsertColumn(3, L"搜索 ms", LVCFMT_LEFT, width * 17 / 100);
+        resultsList_.InsertColumn(4, L"整体 ms", LVCFMT_LEFT, width * 18 / 100);
     } else {
-        resultsList_.InsertColumn(0, L"x", LVCFMT_LEFT, 95);
-        resultsList_.InsertColumn(1, L"y", LVCFMT_LEFT, 95);
-        resultsList_.InsertColumn(2, L"角度", LVCFMT_LEFT, 80);
-        resultsList_.InsertColumn(3, L"尺度", LVCFMT_LEFT, 80);
-        resultsList_.InsertColumn(4, L"分数", LVCFMT_LEFT, 100);
+        resultsList_.InsertColumn(0, L"x", LVCFMT_LEFT, width * 20 / 100);
+        resultsList_.InsertColumn(1, L"y", LVCFMT_LEFT, width * 20 / 100);
+        resultsList_.InsertColumn(2, L"角度", LVCFMT_LEFT, width * 18 / 100);
+        resultsList_.InsertColumn(3, L"尺度", LVCFMT_LEFT, width * 18 / 100);
+        resultsList_.InsertColumn(4, L"分数", LVCFMT_LEFT, width * 24 / 100);
     }
 }
 
@@ -414,7 +528,7 @@ void CLocatorMfcDlg::OnBatchRun()
         const size_t p99Index = static_cast<size_t>(std::ceil(countValue * 0.99)) - 1;
         CString statistics;
         statistics.Format(
-            L"总数 %d，成功 %d，失败 %d\r\n预处理均值 %.3f ms，搜索均值 %.3f ms\r\n单任务整体均值 %.3f ms，P99 %.3f ms\r\n批量总耗时 %.3f ms",
+            L"总数 %d，成功 %d，失败 %d\r\n均值：预处理 %.3f ms，搜索 %.3f ms，整体 %.3f ms\r\nP99 %.3f ms，批量总耗时 %.3f ms",
             static_cast<int>(results.size()), succeeded,
             static_cast<int>(results.size()) - succeeded,
             preprocessSum / countValue, searchSum / countValue,
@@ -434,8 +548,31 @@ void CLocatorMfcDlg::clearResultDisplay()
     searchView_.setResults({}, modelImage_.cols, modelImage_.rows);
 }
 
+void CLocatorMfcDlg::savePreview(const wchar_t* path)
+{
+    CRect client;
+    GetClientRect(&client);
+    CImage image;
+    if (image.Create(client.Width(), client.Height(), 32) == 0) {
+        throw std::runtime_error("无法创建离屏截图位图");
+    }
+    SetWindowPos(nullptr, -32000, -32000, 0, 0,
+                 SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    ShowWindow(SW_SHOWNOACTIVATE);
+    RedrawWindow(nullptr, nullptr,
+                 RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_FRAME);
+    CDC* target = CDC::FromHandle(image.GetDC());
+    const BOOL printed = PrintWindow(target, PW_CLIENTONLY | PW_RENDERFULLCONTENT);
+    image.ReleaseDC();
+    ShowWindow(SW_HIDE);
+    if (!printed || FAILED(image.Save(path))) {
+        throw std::runtime_error("无法保存离屏截图");
+    }
+}
+
 void CLocatorMfcDlg::runSelfTest(const std::string& directory, const cv::Mat& model,
-                                 const cv::Mat& search, LocatorBackend backend)
+                                 const cv::Mat& search, LocatorBackend backend,
+                                 const wchar_t* previewPath)
 {
     const auto require = [](bool condition, const char* message) {
         if (!condition) {
@@ -449,6 +586,64 @@ void CLocatorMfcDlg::runSelfTest(const std::string& directory, const cv::Mat& mo
     searchView_.setImage(searchImage_);
     templateView_.setImage(modelImage_);
     clearResultDisplay();
+
+    const auto controlRect = [this](int id) {
+        CRect rect;
+        GetDlgItem(id)->GetWindowRect(&rect);
+        ScreenToClient(&rect);
+        return rect;
+    };
+    const auto requireSameRow = [&controlRect, &require](int first, int second, int third,
+                                                        const char* message) {
+        const CRect a = controlRect(first);
+        const CRect b = controlRect(second);
+        const CRect c = controlRect(third);
+        require(a.top == b.top && b.top == c.top, message);
+    };
+    requireSameRow(IDC_ANGLE_MIN, IDC_ANGLE_MAX, IDC_ANGLE_STEP,
+                   "角度最小值、最大值和步进必须并排");
+    requireSameRow(IDC_SCALE_MIN, IDC_SCALE_MAX, IDC_SCALE_STEP,
+                   "尺度最小值、最大值和步进必须并排");
+    requireSameRow(IDC_PYRAMID, IDC_SUBPIXEL, IDC_MIN_SCORE,
+                   "金字塔、亚像素和最低分数必须并排");
+    requireSameRow(IDC_MAX_RESULTS, IDC_X_VICINITY, IDC_Y_VICINITY,
+                   "Top-N 和邻近半径必须并排");
+    require(controlRect(IDC_BATCH_COUNT).top == controlRect(IDC_BATCH_THREADS).top,
+            "批量任务数和线程数必须并排");
+    require((GetDlgItem(IDC_EXECUTE)->GetStyle() & BS_TYPEMASK) == BS_OWNERDRAW &&
+            (GetDlgItem(IDC_BATCH_RUN)->GetStyle() & BS_TYPEMASK) == BS_OWNERDRAW,
+            "主要操作按钮缺少统一的自绘样式");
+
+    CRect client;
+    GetClientRect(&client);
+    require(client.Width() <= 1800 && client.Height() <= 1000,
+            "默认对话框尺寸过大，不适合 1080p 工作区");
+    std::vector<CRect> visibleRects;
+    for (CWnd* child = GetWindow(GW_CHILD); child != nullptr; child = child->GetNextWindow()) {
+        if (!child->IsWindowVisible()) {
+            continue;
+        }
+        CRect rect;
+        child->GetWindowRect(&rect);
+        ScreenToClient(&rect);
+        require(rect.left >= client.left && rect.top >= client.top &&
+                rect.right <= client.right && rect.bottom <= client.bottom,
+                "可见控件超出对话框边界");
+        for (const CRect& previous : visibleRects) {
+            CRect overlap;
+            require(!overlap.IntersectRect(rect, previous), "可见控件之间存在重叠");
+        }
+        visibleRects.push_back(rect);
+    }
+    CRect listClient;
+    resultsList_.GetClientRect(&listClient);
+    int columnWidth = 0;
+    for (int column = 0; column < 5; ++column) {
+        columnWidth += resultsList_.GetColumnWidth(column);
+    }
+    require(columnWidth >= listClient.Width() * 9 / 10,
+            "结果列没有利用列表的可用宽度");
+
     backendCombo_.SetCurSel(backend == LocatorBackend::Gpu ? 1 : 0);
     SetDlgItemText(IDC_ANGLE_MIN, L"-2");
     SetDlgItemText(IDC_ANGLE_MAX, L"1");
@@ -499,6 +694,9 @@ void CLocatorMfcDlg::runSelfTest(const std::string& directory, const cv::Mat& mo
             resultsList_.GetItemText(0, 3) + L"，" + resultsList_.GetItemText(0, 4);
         throw std::runtime_error("对话框单次结果实际为：" +
                                  std::string(CT2A(actual.GetString(), CP_UTF8)));
+    }
+    if (previewPath != nullptr && *previewPath != L'\0') {
+        savePreview(previewPath);
     }
     clearResultDisplay();
     require(resultsList_.GetItemCount() == 0 && !searchView_.hasResults(),

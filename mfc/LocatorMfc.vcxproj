@@ -65,7 +65,7 @@
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <ResourceCompile>
-      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/c65001 %(AdditionalOptions)</AdditionalOptions>
     </ResourceCompile>
     <Link>
       <SubSystem>Windows</SubSystem>

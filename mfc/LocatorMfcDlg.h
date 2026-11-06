@@ -14,7 +14,8 @@ class CLocatorMfcDlg : public CDialogEx {
 public:
     explicit CLocatorMfcDlg(CWnd* parent = nullptr);
     void runSelfTest(const std::string& directory, const cv::Mat& model,
-                     const cv::Mat& search, LocatorBackend backend);
+                     const cv::Mat& search, LocatorBackend backend,
+                     const wchar_t* previewPath = nullptr);
 
 protected:
     BOOL OnInitDialog() override;
@@ -27,12 +28,17 @@ protected:
     afx_msg void OnBatchBrowse();
     afx_msg void OnBatchRun();
     afx_msg LRESULT OnImageSelectionChanged(WPARAM wParam, LPARAM lParam);
+    afx_msg void OnPaint();
+    afx_msg BOOL OnEraseBkgnd(CDC* dc);
+    afx_msg HBRUSH OnCtlColor(CDC* dc, CWnd* wnd, UINT ctlColor);
+    afx_msg void OnDrawItem(int controlId, LPDRAWITEMSTRUCT drawItem);
 
 private:
     bool readConfig(LocatorConfig& config);
     void prepareResultList(bool batch);
     void clearResultDisplay();
     void showError(LocatorError error);
+    void savePreview(const wchar_t* path);
 
     cv::Mat searchImage_;
     cv::Mat modelImage_;
@@ -40,6 +46,8 @@ private:
     CImageViewControl templateView_;
     CListCtrl resultsList_;
     CComboBox backendCombo_;
+    CFont titleFont_;
+    CFont sectionFont_;
     bool selectionForRoi_ = false;
     bool useRoi_ = false;
     LocatorRect roi_ = { 0, 0, 0, 0 };

@@ -25,7 +25,7 @@ bool sameMatch(const LocatorResult& actual, const LocatorResult& expected)
            std::abs(actual.score - expected.score) <= 1e-4;
 }
 
-int runSelfTest(const std::string& directory)
+int runSelfTest(const std::string& directory, const wchar_t* previewPath)
 {
     try {
         const std::vector<ThickPair> pairs = findThickPairs(directory);
@@ -66,7 +66,8 @@ int runSelfTest(const std::string& directory)
                 reference = std::move(batch);
             }
             CLocatorMfcDlg dialog;
-            dialog.runSelfTest(directory, data.models[0], data.searches[0], config.backend);
+            dialog.runSelfTest(directory, data.models[0], data.searches[0], config.backend,
+                               backendIndex == 0 ? previewPath : L"");
             std::cout << (backendIndex == 0 ? "CPU" : "GPU")
                       << "：单次整体 " << single.totalMs << " ms，197 对批量 "
                       << wallMs << " ms\n";
@@ -95,10 +96,14 @@ BOOL CLocatorMfcApp::InitInstance()
     if (arguments != nullptr && argumentCount >= 2 &&
         std::wcscmp(arguments[1], L"--self-test") == 0) {
         int status = 2;
-        if (argumentCount == 3) {
-            status = runSelfTest(std::string(CW2A(arguments[2], CP_ACP)));
+        const bool plain = argumentCount == 3;
+        const bool preview = argumentCount == 5 &&
+            std::wcscmp(arguments[3], L"--preview") == 0;
+        if (plain || preview) {
+            status = runSelfTest(std::string(CW2A(arguments[2], CP_ACP)),
+                                 preview ? arguments[4] : L"");
         } else {
-            std::cerr << "用法：LocatorMfc.exe --self-test <Thick 数据目录>\n";
+            std::cerr << "用法：LocatorMfc.exe --self-test <Thick 数据目录> [--preview <PNG 路径>]\n";
         }
         LocalFree(arguments);
         std::exit(status);
