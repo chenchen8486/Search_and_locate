@@ -4,6 +4,10 @@
 #include "ResultRefiner.h"
 #include "TransformSearch.h"
 
+#ifdef LOCATOR_WITH_CUDA
+#include "gpu/CudaMatcher.h"
+#endif
+
 #include <cmath>
 #include <opencv2/core.hpp>
 #include <stdexcept>
@@ -21,7 +25,15 @@ LocatorError Locator::initialize(const LocatorImage& model, const LocatorConfig&
     if (!locator_internal::isValidImage(model)) {
         return LocatorError::InvalidImage;
     }
-    if (config.backend != LocatorBackend::Cpu) {
+    if (config.backend == LocatorBackend::Gpu) {
+#ifdef LOCATOR_WITH_CUDA
+        if (!CudaMatcher::isAvailable()) {
+            return LocatorError::BackendUnavailable;
+        }
+#else
+        return LocatorError::BackendUnavailable;
+#endif
+    } else if (config.backend != LocatorBackend::Cpu) {
         return LocatorError::BackendUnavailable;
     }
     if (config.pyramidLevels < 1 || config.maxResults < 1 ||
@@ -108,6 +120,13 @@ LocatorError Locator::execute(const LocatorImage& search,
     } catch (const std::invalid_argument&) {
         return LocatorError::InvalidConfig;
     }
+#ifdef LOCATOR_WITH_CUDA
+    catch (const CudaMatcher::Unavailable&) {
+        return LocatorError::BackendUnavailable;
+    } catch (const CudaMatcher::Failure&) {
+        return LocatorError::InternalError;
+    }
+#endif
     for (LocatorResult& candidate : candidates) {
         candidate.x += offset.x;
         candidate.y += offset.y;

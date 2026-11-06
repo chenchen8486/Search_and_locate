@@ -2,12 +2,16 @@
 
 #include <opencv2/imgproc.hpp>
 
+#ifdef LOCATOR_WITH_CUDA
+#include "gpu/CudaMatcher.h"
+#endif
+
 #include <algorithm>
 #include <cmath>
 
 namespace NccMatcher {
 
-cv::Mat match(const cv::Mat& search, const cv::Mat& model)
+cv::Mat match(const cv::Mat& search, const cv::Mat& model, LocatorBackend backend)
 {
     if (search.empty() || model.empty() || search.type() != CV_8UC1 ||
         model.type() != CV_8UC1 || model.cols > search.cols || model.rows > search.rows) {
@@ -20,6 +24,11 @@ cv::Mat match(const cv::Mat& search, const cv::Mat& model)
     if (searchMin == searchMax) {
         return cv::Mat();
     }
+#ifdef LOCATOR_WITH_CUDA
+    if (backend == LocatorBackend::Gpu) {
+        return CudaMatcher::match(search, model);
+    }
+#endif
 
     cv::Mat response;
     cv::matchTemplate(search, model, response, cv::TM_CCOEFF_NORMED);

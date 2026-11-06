@@ -48,7 +48,7 @@ std::vector<TransformSearch::Candidate> searchPyramid(
             throw std::invalid_argument("模板金字塔层数不一致");
         }
         const cv::Mat& coarseModel = model.pyramid.back();
-        const cv::Mat response = NccMatcher::match(coarseSearch, coarseModel);
+        const cv::Mat response = NccMatcher::match(coarseSearch, coarseModel, config.backend);
         const double coarseMinScore = std::max(0.0, config.minScore - 10.0);
         std::vector<TransformSearch::Candidate> coarseCandidates;
 

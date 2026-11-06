@@ -35,6 +35,8 @@ void testBatchSerialParallelEquivalent();
 void testRealDataAll197();
 void testPerformanceTaskComposition();
 void testPerformanceBenchmark500();
+void testGpuAvailability();
+void testGpuCpuEquivalence();
 void exportRealBaseline();
 
 namespace {
@@ -116,7 +118,9 @@ const TestCase tests[] = {
     { "Batch.SerialParallelEquivalent", testBatchSerialParallelEquivalent },
     { "RealData.All197", testRealDataAll197 },
     { "Performance.TaskComposition", testPerformanceTaskComposition },
-    { "Performance.Benchmark500", testPerformanceBenchmark500 }
+    { "Performance.Benchmark500", testPerformanceBenchmark500 },
+    { "Gpu.Availability", testGpuAvailability },
+    { "Gpu.CpuEquivalence", testGpuCpuEquivalence }
 };
 
 bool isCoreTest(const std::string& name)
@@ -142,7 +146,11 @@ bool shouldRun(const TestCase& test, const std::string& mode, const std::string&
         return value == test.name;
     }
     if (value == "all") {
-        return std::string(test.name).compare(0, 12, "Performance.") != 0;
+        return std::string(test.name).compare(0, 12, "Performance.") != 0 &&
+               std::string(test.name).compare(0, 4, "Gpu.") != 0;
+    }
+    if (value == "gpu") {
+        return std::string(test.name).compare(0, 4, "Gpu.") == 0;
     }
     if (value == "core") {
         return isCoreTest(test.name);

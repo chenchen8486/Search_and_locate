@@ -187,7 +187,7 @@ std::vector<Candidate> searchAngles(const std::vector<TransformModel>& models,
                 sampledModels.push_back(translateLinear(model.image, offsetX, offsetY));
             }
         }
-        const cv::Mat response = NccMatcher::match(search, model.image);
+        const cv::Mat response = NccMatcher::match(search, model.image, config.backend);
         std::vector<Candidate> coarseCandidates;
         for (int y = 0; y < response.rows; ++y) {
             for (int x = 0; x < response.cols; ++x) {

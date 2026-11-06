@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Label="UserMacros">
+    <EnableCuda Condition="'$(EnableCuda)' == ''">false</EnableCuda>
+    <CudaToolkitRoot Condition="'$(CudaToolkitRoot)' == ''">$(CUDA_PATH)</CudaToolkitRoot>
+    <CudaTargetsPath Condition="'$(CudaTargetsPath)' == ''">$(CudaToolkitRoot)\extras\visual_studio_integration\MSBuildExtensions\CUDA 11.4.targets</CudaTargetsPath>
+    <CudaCodeGeneration Condition="'$(CudaCodeGeneration)' == ''">compute_86,sm_86;compute_86,compute_86</CudaCodeGeneration>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(EnableCuda)' == 'true'">
+    <CudaToolkitCustomDir>$(CudaToolkitRoot)</CudaToolkitCustomDir>
+    <IncludePath>$(CudaToolkitRoot)\include;$(IncludePath)</IncludePath>
+    <LibraryPath>$(CudaToolkitRoot)\lib\x64;$(LibraryPath)</LibraryPath>
+    <PreprocessorDefinitions>LOCATOR_WITH_CUDA;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+  </PropertyGroup>
+  <Import Project="$(CudaToolkitRoot)\extras\visual_studio_integration\MSBuildExtensions\CUDA 11.4.props" Condition="'$(EnableCuda)' == 'true'" />
+  <ItemDefinitionGroup Condition="'$(EnableCuda)' == 'true'">
+    <ClCompile>
+      <PreprocessorDefinitions>LOCATOR_WITH_CUDA;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>cudart.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+    <CudaCompile>
+      <Runtime>InheritFromHost</Runtime>
+      <TypeInfo>InheritFromHost</TypeInfo>
+      <CudaRuntime>Shared</CudaRuntime>
+      <TargetMachinePlatform>64</TargetMachinePlatform>
+      <CodeGeneration>$(CudaCodeGeneration)</CodeGeneration>
+      <AdditionalOptions>-Xcompiler /utf-8 %(AdditionalOptions)</AdditionalOptions>
+    </CudaCompile>
+  </ItemDefinitionGroup>
+</Project>
