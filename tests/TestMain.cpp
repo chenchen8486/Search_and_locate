@@ -37,6 +37,13 @@ void testPerformanceTaskComposition();
 void testPerformanceBenchmark500();
 void testGpuAvailability();
 void testGpuCpuEquivalence();
+void testGpuNonContinuousRoi();
+void testGpuTransformAndPyramid();
+void testGpuInvalidInput();
+void testGpuParallelEquivalence();
+void testGpuSyntheticFixedSeed100();
+void testGpuRealDataAll197();
+void testGpuPerformanceBenchmark500();
 void exportRealBaseline();
 
 namespace {
@@ -120,7 +127,14 @@ const TestCase tests[] = {
     { "Performance.TaskComposition", testPerformanceTaskComposition },
     { "Performance.Benchmark500", testPerformanceBenchmark500 },
     { "Gpu.Availability", testGpuAvailability },
-    { "Gpu.CpuEquivalence", testGpuCpuEquivalence }
+    { "Gpu.CpuEquivalence", testGpuCpuEquivalence },
+    { "Gpu.NonContinuousRoi", testGpuNonContinuousRoi },
+    { "Gpu.TransformAndPyramid", testGpuTransformAndPyramid },
+    { "Gpu.InvalidInput", testGpuInvalidInput },
+    { "Gpu.ParallelEquivalence", testGpuParallelEquivalence },
+    { "Gpu.Synthetic100", testGpuSyntheticFixedSeed100 },
+    { "Gpu.RealData197", testGpuRealDataAll197 },
+    { "Gpu.Performance500", testGpuPerformanceBenchmark500 }
 };
 
 bool isCoreTest(const std::string& name)

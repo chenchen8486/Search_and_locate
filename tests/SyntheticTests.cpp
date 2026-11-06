@@ -135,10 +135,10 @@ cv::Point2d pasteAtCenter(const cv::Mat& transformed, cv::Mat& search,
 
 } // namespace
 
-void testSyntheticFixedSeed100()
+void runSyntheticFixedSeed100(LocatorBackend backend, const std::string& reportFile)
 {
     const double fractions[] = { 0.0, -0.375, 0.25, 0.5, -0.125, 0.375, -0.25, 0.125 };
-    std::ofstream report("temp/t09_synthetic_results.csv");
+    std::ofstream report(reportFile);
     expect(report.is_open(), "无法保存合成回归真值与结果");
     report << "case,expected_x,expected_y,expected_angle,expected_scale,actual_x,actual_y,actual_angle,actual_scale,score,center_error\n";
     std::vector<std::string> failures;
@@ -163,6 +163,7 @@ void testSyntheticFixedSeed100()
         };
 
         LocatorConfig config;
+        config.backend = backend;
         config.angleMinDeg = angle - 4.0;
         config.angleMaxDeg = angle + 4.0;
         config.angleStepDeg = 2.0;
@@ -228,4 +229,9 @@ void testSyntheticFixedSeed100()
     }
     std::cout << "100 组合成回归最大中心误差：" << maximumError << " 像素\n";
     expect(failures.empty(), failures.empty() ? "" : "合成回归失败：" + failures.front());
+}
+
+void testSyntheticFixedSeed100()
+{
+    runSyntheticFixedSeed100(LocatorBackend::Cpu, "temp/t09_synthetic_results.csv");
 }

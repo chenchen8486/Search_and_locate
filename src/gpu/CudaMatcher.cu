@@ -19,34 +19,34 @@ __global__ void nccKernel(const unsigned char* search, int searchWidth,
     }
 
     const int count = modelWidth * modelHeight;
-    double modelSum = 0.0;
-    double searchSum = 0.0;
+    float modelSum = 0.0f;
+    float searchSum = 0.0f;
     for (int row = 0; row < modelHeight; ++row) {
         for (int col = 0; col < modelWidth; ++col) {
             modelSum += model[row * modelWidth + col];
             searchSum += search[(y + row) * searchWidth + x + col];
         }
     }
-    const double modelMean = modelSum / count;
-    const double searchMean = searchSum / count;
-    double modelVariance = 0.0;
-    double searchVariance = 0.0;
-    double covariance = 0.0;
+    const float modelMean = modelSum / count;
+    const float searchMean = searchSum / count;
+    float modelVariance = 0.0f;
+    float searchVariance = 0.0f;
+    float covariance = 0.0f;
     for (int row = 0; row < modelHeight; ++row) {
         for (int col = 0; col < modelWidth; ++col) {
-            const double modelValue = model[row * modelWidth + col] - modelMean;
-            const double searchValue = search[(y + row) * searchWidth + x + col] - searchMean;
+            const float modelValue = model[row * modelWidth + col] - modelMean;
+            const float searchValue = search[(y + row) * searchWidth + x + col] - searchMean;
             modelVariance += modelValue * modelValue;
             searchVariance += searchValue * searchValue;
             covariance += modelValue * searchValue;
         }
     }
-    double value = 0.0;
-    if (modelVariance > 1e-12 && searchVariance > 1e-12) {
-        value = covariance / sqrt(modelVariance * searchVariance);
-        value = max(-1.0, min(1.0, value));
+    float value = 0.0f;
+    if (modelVariance > 1e-12f && searchVariance > 1e-12f) {
+        value = covariance / sqrtf(modelVariance * searchVariance);
+        value = fmaxf(-1.0f, fminf(1.0f, value));
     }
-    response[y * responseWidth + x] = static_cast<float>(value);
+    response[y * responseWidth + x] = value;
 }
 
 class DeviceBuffer {

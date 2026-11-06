@@ -96,11 +96,14 @@ void testBatchSerialParallelEquivalent()
 
 namespace {
 
-std::vector<BatchResult> runRealData(BatchDataSet& data)
+std::vector<BatchResult> runRealData(BatchDataSet& data, LocatorBackend backend)
 {
     const std::vector<ThickPair> pairs = findThickPairs(realDataDirectory());
     expect(pairs.size() == 197, "真实回归必须有 197 对数据");
     data = makeBenchmarkTasks(pairs, 197);
+    for (BatchTask& task : data.tasks) {
+        task.config.backend = backend;
+    }
     return executeBatch(data.tasks, 1);
 }
 
@@ -109,7 +112,7 @@ std::vector<BatchResult> runRealData(BatchDataSet& data)
 void exportRealBaseline()
 {
     BatchDataSet data;
-    const std::vector<BatchResult> results = runRealData(data);
+    const std::vector<BatchResult> results = runRealData(data, LocatorBackend::Cpu);
     std::ofstream output("tests/data/expected_real_data.csv");
     expect(output.is_open(), "无法写入真实数据基准文件");
     output << "id,x,y,angle,scale,score\n" << std::setprecision(17);
@@ -123,10 +126,10 @@ void exportRealBaseline()
     std::cout << "已导出 197 对真实数据结果，尚需回归和 MFC 叠加验收。\n";
 }
 
-void testRealDataAll197()
+void runRealDataAll197(LocatorBackend backend, double scoreTolerance)
 {
     BatchDataSet data;
-    const std::vector<BatchResult> results = runRealData(data);
+    const std::vector<BatchResult> results = runRealData(data, backend);
     std::ifstream input("tests/data/expected_real_data.csv");
     expect(input.is_open(), "缺少 tests/data/expected_real_data.csv 基准文件");
     std::string line;
@@ -151,10 +154,15 @@ void testRealDataAll197()
                    "真实数据任务 " + std::to_string(results[i].id) + " y 回归不一致");
         expectNear(match.angle, std::stod(values[3]), 1e-9, "真实数据角度回归不一致");
         expectNear(match.scale, std::stod(values[4]), 1e-9, "真实数据尺度回归不一致");
-        expectNear(match.score, std::stod(values[5]), 1e-6, "真实数据分数回归不一致");
+        expectNear(match.score, std::stod(values[5]), scoreTolerance, "真实数据分数回归不一致");
     }
     expect(!std::getline(input, line), "真实数据基准不应包含额外行");
     std::cout << "197 对真实数据逐对回归通过。\n";
+}
+
+void testRealDataAll197()
+{
+    runRealDataAll197(LocatorBackend::Cpu, 1e-6);
 }
 
 void testPerformanceTaskComposition()
@@ -181,10 +189,13 @@ void testPerformanceTaskComposition()
     std::cout << "500 个任务，197 对独立图像。\n";
 }
 
-void testPerformanceBenchmark500()
+void runPerformanceBenchmark500(LocatorBackend backend)
 {
     const std::vector<ThickPair> pairs = findThickPairs(realDataDirectory());
     BatchDataSet data = makeBenchmarkTasks(pairs, 500);
+    for (BatchTask& task : data.tasks) {
+        task.config.backend = backend;
+    }
     for (int i = 0; i < 5; ++i) {
         executeBatch(data.tasks, 20);
     }
@@ -194,7 +205,9 @@ void testPerformanceBenchmark500()
     double preprocessSum = 0.0;
     double searchSum = 0.0;
     double totalSum = 0.0;
-    std::ofstream raw("temp/t10_benchmark500.csv");
+    const char* rawFile = backend == LocatorBackend::Gpu ?
+        "temp/t11_gpu_benchmark500.csv" : "temp/t10_benchmark500.csv";
+    std::ofstream raw(rawFile);
     expect(raw.is_open(), "无法保存 500 任务原始计时");
     raw << "round,wall_ms,mean_preprocess_ms,mean_search_ms,mean_total_ms,p99_ms\n";
     raw << std::setprecision(17);
@@ -233,10 +246,21 @@ void testPerformanceBenchmark500()
     const double sampleCount = static_cast<double>(taskTotals.size());
     const double p99 = taskTotals[static_cast<size_t>(std::ceil(sampleCount * 0.99)) - 1];
     const double median = wallTimes[wallTimes.size() / 2];
-    std::cout << "环境：OpenCV " << CV_VERSION << "，Release x64，20 线程，处理器由验收日志记录。\n";
+#ifdef _DEBUG
+    const char* configuration = "Debug";
+#else
+    const char* configuration = "Release";
+#endif
+    std::cout << "后端：" << (backend == LocatorBackend::Gpu ? "GPU" : "CPU")
+              << "，OpenCV " << CV_VERSION << "，" << configuration << " x64，20 线程。\n";
     std::cout << "500 个任务，197 对独立图像，预热 5 轮，记录 50 轮。\n";
     std::cout << "整体耗时中位数 " << median << " ms，单任务预处理均值 "
               << preprocessSum / sampleCount << " ms，搜索均值 " << searchSum / sampleCount
               << " ms，整体均值 " << totalSum / sampleCount << " ms，单任务 P99 "
               << p99 << " ms。20 ms 目标" << (median <= 20.0 ? "达到" : "未达到") << '\n';
+}
+
+void testPerformanceBenchmark500()
+{
+    runPerformanceBenchmark500(LocatorBackend::Cpu);
 }
