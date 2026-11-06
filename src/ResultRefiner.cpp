@@ -35,6 +35,23 @@ cv::Point2d fitOffset(const cv::Mat& response, cv::Point point)
                        std::max(-0.5, std::min(0.5, offsetY)));
 }
 
+bool isBetter(const LocatorResult& left, const LocatorResult& right)
+{
+    if (left.score != right.score) {
+        return left.score > right.score;
+    }
+    if (left.x != right.x) {
+        return left.x < right.x;
+    }
+    if (left.y != right.y) {
+        return left.y < right.y;
+    }
+    if (left.angle != right.angle) {
+        return left.angle < right.angle;
+    }
+    return left.scale < right.scale;
+}
+
 } // namespace
 
 cv::Point2d refineSubPixel(const cv::Mat& response, cv::Point bestPoint, int resolution)
@@ -57,23 +74,20 @@ cv::Point2d refineSubPixel(const cv::Mat& response, cv::Point bestPoint, int res
 std::vector<LocatorResult> selectResults(const std::vector<LocatorResult>& candidates,
                                          const LocatorConfig& config)
 {
+    if (config.maxResults == 1) {
+        const LocatorResult* best = nullptr;
+        for (const LocatorResult& candidate : candidates) {
+            if (candidate.score >= config.minScore &&
+                (best == nullptr || isBetter(candidate, *best))) {
+                best = &candidate;
+            }
+        }
+        return best == nullptr ? std::vector<LocatorResult>() :
+                                 std::vector<LocatorResult>{ *best };
+    }
+
     std::vector<LocatorResult> sorted = candidates;
-    std::stable_sort(sorted.begin(), sorted.end(), [](const LocatorResult& left,
-                                                       const LocatorResult& right) {
-        if (left.score != right.score) {
-            return left.score > right.score;
-        }
-        if (left.x != right.x) {
-            return left.x < right.x;
-        }
-        if (left.y != right.y) {
-            return left.y < right.y;
-        }
-        if (left.angle != right.angle) {
-            return left.angle < right.angle;
-        }
-        return left.scale < right.scale;
-    });
+    std::stable_sort(sorted.begin(), sorted.end(), isBetter);
 
     std::vector<LocatorResult> selected;
     for (const LocatorResult& candidate : sorted) {
