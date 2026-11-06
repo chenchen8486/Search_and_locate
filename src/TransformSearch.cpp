@@ -328,7 +328,11 @@ void appendModelCandidates(const TransformModel& model, const cv::Mat& search,
                      neighborX <= std::min(response.cols - 1, x + 1); ++neighborX) {
                     if (response.at<float>(neighborY, neighborX) > value) {
                         localMaximum = false;
+                        break;
                     }
+                }
+                if (!localMaximum) {
+                    break;
                 }
             }
             const double score = std::max(0.0, static_cast<double>(value)) * 100.0;
@@ -353,12 +357,16 @@ void appendModelCandidates(const TransformModel& model, const cv::Mat& search,
         const cv::Mat patch = search(cv::Rect(point.x, point.y, model.image.cols, model.image.rows));
         const std::vector<double> sampledScores = scoreSubpixelSamples(patch, sampledModels);
         const double bestScore = *std::max_element(sampledScores.begin(), sampledScores.end());
+        double patchMinimum = 0.0;
+        double patchMaximum = 0.0;
+        cv::minMaxLoc(patch, &patchMinimum, &patchMaximum);
+        const bool constantPatch = patchMinimum == patchMaximum;
         double verifiedScore = -2.0;
         for (size_t index = 0; index < sampledScores.size(); ++index) {
-            if (bestScore - sampledScores[index] > 1e-3) {
+            if (constantPatch || bestScore - sampledScores[index] > 1e-3) {
                 continue;
             }
-            const cv::Mat sampledResponse = NccMatcher::match(patch, sampledModels[index].image);
+            const cv::Mat sampledResponse = NccMatcher::matchSameSize(patch, sampledModels[index].image);
             if (sampledResponse.empty()) {
                 continue;
             }

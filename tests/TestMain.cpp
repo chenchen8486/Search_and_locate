@@ -12,6 +12,7 @@ void testThickPairs();
 void testPairingErrors();
 void testNccExactLocation();
 void testNccSameSizeScore();
+void testNccSameSizeMatch();
 void testNccPaddedStride();
 void testNccConstantInput();
 void testNccConstantSearchWindow();
@@ -145,6 +146,7 @@ const TestCase tests[] = {
     { "Data.PairingErrors", testPairingErrors },
     { "Ncc.ExactLocation", testNccExactLocation },
     { "Ncc.SameSizeScore", testNccSameSizeScore },
+    { "Ncc.SameSizeMatch", testNccSameSizeMatch },
     { "Ncc.PaddedStride", testNccPaddedStride },
     { "Ncc.ConstantInput", testNccConstantInput },
     { "Ncc.ConstantSearchWindow", testNccConstantSearchWindow },
@@ -195,7 +197,8 @@ bool isCoreTest(const std::string& name)
 {
     return name == "Config.Defaults" || name == "Image.EmptyRejected" ||
            name == "Execute.NotInitialized" || name == "Ncc.ExactLocation" ||
-           name == "Ncc.SameSizeScore" || name == "Ncc.PaddedStride" || name == "Ncc.ConstantInput" ||
+           name == "Ncc.SameSizeScore" || name == "Ncc.SameSizeMatch" ||
+           name == "Ncc.PaddedStride" || name == "Ncc.ConstantInput" ||
            name == "Ncc.ConstantSearchWindow" ||
            name == "Roi.RestrictsSearch" || name == "Roi.InvalidRejected" ||
            name == "TopN.ScoreAndStableOrder" || name == "Vicinity.SuppressesDuplicates" ||

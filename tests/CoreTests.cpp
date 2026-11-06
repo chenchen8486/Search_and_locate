@@ -740,3 +740,18 @@ void testSubPixelPreparedSamples()
         }
     }
 }
+
+void testNccSameSizeMatch()
+{
+    cv::Mat padded(31, 37, CV_8UC1, cv::Scalar(0));
+    const cv::Mat textured = makeTexturedImage(29, 31, 17101);
+    textured.copyTo(padded(cv::Rect(0, 0, textured.cols, textured.rows)));
+    const cv::Mat search = padded(cv::Rect(0, 0, textured.cols, textured.rows));
+    const cv::Mat model = makeTexturedImage(29, 31, 17102);
+    const cv::Mat expected = NccMatcher::match(search, model);
+    const cv::Mat actual = NccMatcher::matchSameSize(search, model);
+    expect(actual.size() == cv::Size(1, 1) && actual.type() == CV_32FC1,
+           "同尺寸复核响应应为 1×1 浮点图");
+    expect(actual.at<float>(0, 0) == expected.at<float>(0, 0),
+           "同尺寸直接复核与原 OpenCV 路径不完全一致");
+}

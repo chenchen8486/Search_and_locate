@@ -35,6 +35,17 @@ cv::Mat match(const cv::Mat& search, const cv::Mat& model, LocatorBackend backen
     return response;
 }
 
+cv::Mat matchSameSize(const cv::Mat& search, const cv::Mat& model)
+{
+    if (search.empty() || model.empty() || search.type() != CV_8UC1 ||
+        model.type() != CV_8UC1 || search.size() != model.size()) {
+        return cv::Mat();
+    }
+    cv::Mat response;
+    cv::matchTemplate(search, model, response, cv::TM_CCOEFF_NORMED);
+    return response;
+}
+
 double scoreSameSize(const cv::Mat& search, const cv::Mat& model)
 {
     if (search.empty() || model.empty() || search.type() != CV_8UC1 ||
