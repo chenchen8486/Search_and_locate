@@ -702,3 +702,41 @@ void testVicinityNegativeRejected()
     expect(locator.initialize(asLocatorImage(model), config) == LocatorError::InvalidConfig,
            "负 y 邻近半径应返回 InvalidConfig");
 }
+
+void testSubPixelPreparedSamples()
+{
+    cv::Mat modelStorage(13, 17, CV_8UC1, cv::Scalar(0));
+    const cv::Mat texturedModel = makeTexturedImage(11, 9, 14301);
+    texturedModel.copyTo(modelStorage(cv::Rect(0, 0, texturedModel.cols, texturedModel.rows)));
+    const cv::Mat model = modelStorage(cv::Rect(0, 0, texturedModel.cols, texturedModel.rows));
+    cv::Mat patchStorage(15, 16, CV_8UC1, cv::Scalar(0));
+    const cv::Mat texturedPatch = makeTexturedImage(11, 9, 14302);
+    texturedPatch.copyTo(patchStorage(cv::Rect(0, 0, texturedPatch.cols, texturedPatch.rows)));
+    const cv::Mat patch = patchStorage(cv::Rect(0, 0, texturedPatch.cols, texturedPatch.rows));
+
+    const int resolutions[] = { 1, 2, 4, 8 };
+    for (int resolution : resolutions) {
+        const std::vector<TransformSearch::SubpixelSample> samples =
+            TransformSearch::makeSubpixelSamples(model, resolution);
+        const std::vector<double> scores = TransformSearch::scoreSubpixelSamples(patch, samples);
+        const int half = resolution > 1 ? resolution / 2 : 0;
+        const int side = half * 2 + 1;
+        expect(samples.size() == static_cast<size_t>(side * side) && scores.size() == samples.size(),
+               "亚像素预备样本数量错误");
+        for (size_t index = 0; index < samples.size(); ++index) {
+            const TransformSearch::SubpixelSample& sample = samples[index];
+            const int stepX = static_cast<int>(index % side) - half;
+            const int stepY = static_cast<int>(index / side) - half;
+            const double offsetX = static_cast<double>(stepX) / resolution;
+            const double offsetY = static_cast<double>(stepY) / resolution;
+            expect(sample.offsetX == offsetX && sample.offsetY == offsetY,
+                   "亚像素预备样本顺序或偏移错误");
+            const cv::Mat expected = TransformSearch::translateLinear(model, offsetX, offsetY);
+            expect(cv::norm(sample.image, expected, cv::NORM_INF) == 0.0,
+                   "亚像素预备样本与原平移结果不一致");
+            const double expectedScore = NccMatcher::scoreSameSize(patch, expected);
+            expect(scores[index] == expectedScore,
+                   "亚像素预备评分与原双精度计算不完全一致，索引 " + std::to_string(index));
+        }
+    }
+}

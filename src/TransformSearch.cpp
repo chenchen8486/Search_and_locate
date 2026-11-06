@@ -120,29 +120,37 @@ std::vector<TransformModel> makeTransformModels(const cv::Mat& model, const Loca
     return models;
 }
 
-cv::Mat translateLinear(const cv::Mat& image, double offsetX, double offsetY)
+namespace {
+
+struct LinearMap {
+    std::vector<int> left;
+    std::vector<int> right;
+    std::vector<int> leftWeight;
+    std::vector<int> rightWeight;
+};
+
+LinearMap makeLinearMap(int width, double offsetX)
 {
-    if (image.empty() || image.type() != CV_8UC1) {
-        return cv::Mat();
-    }
-    if (offsetX == 0.0 && offsetY == 0.0) {
-        return image.clone();
-    }
-    std::vector<int> mapX(image.cols * 4);
-    int* left = mapX.data();
-    int* right = left + image.cols;
-    int* leftWeight = right + image.cols;
-    int* rightWeight = leftWeight + image.cols;
-    for (int x = 0; x < image.cols; ++x) {
+    LinearMap map;
+    map.left.resize(width);
+    map.right.resize(width);
+    map.leftWeight.resize(width);
+    map.rightWeight.resize(width);
+    for (int x = 0; x < width; ++x) {
         const double sourceX = x - offsetX;
         const int floorX = static_cast<int>(std::floor(sourceX));
-        left[x] = std::max(0, std::min(image.cols - 1, floorX));
-        right[x] = std::max(0, std::min(image.cols - 1, floorX + 1));
-        rightWeight[x] = static_cast<int>(std::lround((sourceX - floorX) * 32.0));
-        leftWeight[x] = 32 - rightWeight[x];
+        map.left[x] = std::max(0, std::min(width - 1, floorX));
+        map.right[x] = std::max(0, std::min(width - 1, floorX + 1));
+        map.rightWeight[x] = static_cast<int>(std::lround((sourceX - floorX) * 32.0));
+        map.leftWeight[x] = 32 - map.rightWeight[x];
     }
+    return map;
+}
 
-    cv::Mat shifted(image.size(), CV_8UC1);
+void translateLinearWithMap(const cv::Mat& image, double offsetY, const LinearMap& map,
+                            cv::Mat& shifted)
+{
+    shifted.create(image.size(), CV_8UC1);
     for (int y = 0; y < image.rows; ++y) {
         const double sourceY = y - offsetY;
         const int floorY = static_cast<int>(std::floor(sourceY));
@@ -154,14 +162,115 @@ cv::Mat translateLinear(const cv::Mat& image, double offsetX, double offsetY)
         const unsigned char* row1 = image.ptr<unsigned char>(y1);
         unsigned char* output = shifted.ptr<unsigned char>(y);
         for (int x = 0; x < image.cols; ++x) {
-            const int sum = (row0[left[x]] * leftWeight[x] + row0[right[x]] * rightWeight[x]) *
-                            topWeight +
-                            (row1[left[x]] * leftWeight[x] + row1[right[x]] * rightWeight[x]) *
-                            weightY;
+            const int sum = (row0[map.left[x]] * map.leftWeight[x] +
+                             row0[map.right[x]] * map.rightWeight[x]) * topWeight +
+                            (row1[map.left[x]] * map.leftWeight[x] +
+                             row1[map.right[x]] * map.rightWeight[x]) * weightY;
             output[x] = static_cast<unsigned char>((sum + 512) >> 10);
         }
     }
+}
+
+} // namespace
+
+cv::Mat translateLinear(const cv::Mat& image, double offsetX, double offsetY)
+{
+    if (image.empty() || image.type() != CV_8UC1) {
+        return cv::Mat();
+    }
+    if (offsetX == 0.0 && offsetY == 0.0) {
+        return image.clone();
+    }
+    cv::Mat shifted;
+    translateLinearWithMap(image, offsetY, makeLinearMap(image.cols, offsetX), shifted);
     return shifted;
+}
+
+std::vector<SubpixelSample> makeSubpixelSamples(const cv::Mat& model, int resolution)
+{
+    if (model.empty() || model.type() != CV_8UC1 ||
+        (resolution != 1 && resolution != 2 && resolution != 4 && resolution != 8)) {
+        throw std::invalid_argument("亚像素模板或档位无效");
+    }
+    const int half = resolution > 1 ? resolution / 2 : 0;
+    const int side = half * 2 + 1;
+    cv::Mat storage(model.rows * side * side, model.cols, CV_8UC1);
+    std::vector<LinearMap> maps;
+    maps.reserve(side);
+    for (int step = -half; step <= half; ++step) {
+        maps.push_back(makeLinearMap(model.cols, static_cast<double>(step) / resolution));
+    }
+
+    std::vector<SubpixelSample> samples;
+    samples.reserve(side * side);
+    for (int stepY = -half; stepY <= half; ++stepY) {
+        const double offsetY = static_cast<double>(stepY) / resolution;
+        for (int stepX = -half; stepX <= half; ++stepX) {
+            const int index = (stepY + half) * side + stepX + half;
+            SubpixelSample sample;
+            sample.offsetX = static_cast<double>(stepX) / resolution;
+            sample.offsetY = offsetY;
+            sample.image = storage.rowRange(index * model.rows, (index + 1) * model.rows);
+            translateLinearWithMap(model, offsetY, maps[stepX + half], sample.image);
+            sample.sum = 0.0;
+            sample.squares = 0.0;
+            for (int y = 0; y < model.rows; ++y) {
+                const unsigned char* row = sample.image.ptr<unsigned char>(y);
+                for (int x = 0; x < model.cols; ++x) {
+                    const double value = row[x];
+                    sample.sum += value;
+                    sample.squares += value * value;
+                }
+            }
+            samples.push_back(sample);
+        }
+    }
+    return samples;
+}
+
+std::vector<double> scoreSubpixelSamples(const cv::Mat& patch,
+                                         const std::vector<SubpixelSample>& samples)
+{
+    std::vector<double> scores;
+    scores.reserve(samples.size());
+    if (patch.empty() || patch.type() != CV_8UC1) {
+        return scores;
+    }
+    double searchSum = 0.0;
+    double searchSquares = 0.0;
+    for (int y = 0; y < patch.rows; ++y) {
+        const unsigned char* row = patch.ptr<unsigned char>(y);
+        for (int x = 0; x < patch.cols; ++x) {
+            const double value = row[x];
+            searchSum += value;
+            searchSquares += value * value;
+        }
+    }
+    const double count = static_cast<double>(patch.rows * patch.cols);
+    const double searchVariance = searchSquares - searchSum * searchSum / count;
+    for (const SubpixelSample& sample : samples) {
+        if (sample.image.size() != patch.size() || sample.image.type() != CV_8UC1) {
+            scores.push_back(0.0);
+            continue;
+        }
+        double productSum = 0.0;
+        for (int y = 0; y < patch.rows; ++y) {
+            const unsigned char* searchRow = patch.ptr<unsigned char>(y);
+            const unsigned char* modelRow = sample.image.ptr<unsigned char>(y);
+            for (int x = 0; x < patch.cols; ++x) {
+                productSum += static_cast<double>(searchRow[x]) * modelRow[x];
+            }
+        }
+        const double modelVariance = sample.squares - sample.sum * sample.sum / count;
+        if (searchVariance <= 1e-12 || modelVariance <= 1e-12) {
+            scores.push_back(0.0);
+            continue;
+        }
+        const double covariance = productSum - searchSum * sample.sum / count;
+        scores.push_back(std::max(-1.0, std::min(1.0,
+            covariance / std::sqrt(searchVariance * modelVariance))));
+    }
+    return scores;
 }
 
 std::vector<Candidate> searchAngles(const std::vector<TransformModel>& models,
@@ -177,16 +286,8 @@ std::vector<Candidate> searchAngles(const std::vector<TransformModel>& models,
     }
 
     for (const TransformModel& model : models) {
-        std::vector<cv::Mat> sampledModels;
-        for (double offsetY : offsets) {
-            for (double offsetX : offsets) {
-                if (offsetX == 0.0 && offsetY == 0.0) {
-                    sampledModels.push_back(model.image);
-                    continue;
-                }
-                sampledModels.push_back(translateLinear(model.image, offsetX, offsetY));
-            }
-        }
+        const std::vector<SubpixelSample> sampledModels =
+            makeSubpixelSamples(model.image, resolution);
         const cv::Mat response = NccMatcher::match(search, model.image, config.backend);
         std::vector<Candidate> coarseCandidates;
         for (int y = 0; y < response.rows; ++y) {
@@ -225,18 +326,14 @@ std::vector<Candidate> searchAngles(const std::vector<TransformModel>& models,
             candidate.scale = model.scale;
             candidate.score = coarse.score;
             const cv::Mat patch = search(cv::Rect(point.x, point.y, model.image.cols, model.image.rows));
-            std::vector<double> sampledScores;
-            sampledScores.reserve(offsets.size() * offsets.size());
-            for (const cv::Mat& sampled : sampledModels) {
-                sampledScores.push_back(NccMatcher::scoreSameSize(patch, sampled));
-            }
+            const std::vector<double> sampledScores = scoreSubpixelSamples(patch, sampledModels);
             const double bestScore = *std::max_element(sampledScores.begin(), sampledScores.end());
             double verifiedScore = -2.0;
             for (size_t index = 0; index < sampledScores.size(); ++index) {
                 if (bestScore - sampledScores[index] > 1e-3) {
                     continue;
                 }
-                const cv::Mat sampledResponse = NccMatcher::match(patch, sampledModels[index]);
+                const cv::Mat sampledResponse = NccMatcher::match(patch, sampledModels[index].image);
                 if (sampledResponse.empty()) {
                     continue;
                 }

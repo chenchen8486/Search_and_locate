@@ -39,6 +39,7 @@ void testPyramidEquivalentResult();
 void testPyramidKeepsRequestedRange();
 void testSubPixelKnownShift();
 void testSubPixelBorderFallback();
+void testSubPixelPreparedSamples();
 void testSyntheticFixedSeed100();
 void testBatchOrderAndErrors();
 void testBatchSerialParallelEquivalent();
@@ -166,6 +167,7 @@ const TestCase tests[] = {
     { "Pyramid.KeepsRequestedRange", testPyramidKeepsRequestedRange },
     { "SubPixel.KnownShift", testSubPixelKnownShift },
     { "SubPixel.BorderFallback", testSubPixelBorderFallback },
+    { "SubPixel.PreparedSamples", testSubPixelPreparedSamples },
     { "Synthetic.FixedSeed100", testSyntheticFixedSeed100 },
     { "Batch.OrderAndErrors", testBatchOrderAndErrors },
     { "Batch.SerialParallelEquivalent", testBatchSerialParallelEquivalent },
@@ -204,6 +206,7 @@ bool isCoreTest(const std::string& name)
            name == "Pyramid.InvalidLevel" || name == "Pyramid.CoarseOrderReversal" ||
            name == "Pyramid.EquivalentResult" || name == "Pyramid.KeepsRequestedRange" ||
            name == "SubPixel.KnownShift" || name == "SubPixel.BorderFallback" ||
+           name == "SubPixel.PreparedSamples" ||
            name == "Batch.OrderAndErrors" || name == "Batch.SerialParallelEquivalent";
 }
 
