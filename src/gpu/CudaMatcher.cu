@@ -49,30 +49,6 @@ __global__ void nccKernel(const unsigned char* search, int searchWidth,
     response[y * responseWidth + x] = value;
 }
 
-class DeviceBuffer {
-public:
-    explicit DeviceBuffer(size_t bytes)
-    {
-        const cudaError_t error = cudaMalloc(&data_, bytes);
-        if (error != cudaSuccess) {
-            throw Failure(cudaGetErrorString(error));
-        }
-    }
-
-    ~DeviceBuffer()
-    {
-        cudaFree(data_);
-    }
-
-    void* get() const
-    {
-        return data_;
-    }
-
-private:
-    void* data_ = nullptr;
-};
-
 void check(cudaError_t error)
 {
     if (error != cudaSuccess) {
@@ -80,25 +56,76 @@ void check(cudaError_t error)
     }
 }
 
-class Stream {
+class Workspace {
 public:
-    Stream()
+    Workspace()
     {
         check(cudaStreamCreate(&stream_));
     }
 
-    ~Stream()
+    ~Workspace()
     {
+        cudaFree(search_);
+        cudaFree(model_);
+        cudaFree(response_);
         cudaStreamDestroy(stream_);
     }
 
-    cudaStream_t get() const
+    void reserveSearch(size_t bytes)
+    {
+        reserve(search_, searchBytes_, bytes);
+    }
+
+    void reserveModel(size_t bytes)
+    {
+        reserve(model_, modelBytes_, bytes);
+    }
+
+    void reserveResponse(size_t bytes)
+    {
+        reserve(response_, responseBytes_, bytes);
+    }
+
+    cudaStream_t stream() const
     {
         return stream_;
     }
 
+    void* search() const
+    {
+        return search_;
+    }
+
+    void* model() const
+    {
+        return model_;
+    }
+
+    void* response() const
+    {
+        return response_;
+    }
+
 private:
+    static void reserve(void*& buffer, size_t& capacity, size_t bytes)
+    {
+        if (bytes <= capacity) {
+            return;
+        }
+        cudaFree(buffer);
+        buffer = nullptr;
+        capacity = 0;
+        check(cudaMalloc(&buffer, bytes));
+        capacity = bytes;
+    }
+
     cudaStream_t stream_ = nullptr;
+    void* search_ = nullptr;
+    void* model_ = nullptr;
+    void* response_ = nullptr;
+    size_t searchBytes_ = 0;
+    size_t modelBytes_ = 0;
+    size_t responseBytes_ = 0;
 };
 
 } // namespace
@@ -123,26 +150,26 @@ cv::Mat match(const cv::Mat& search, const cv::Mat& model)
     const int responseWidth = search.cols - model.cols + 1;
     const int responseHeight = search.rows - model.rows + 1;
     cv::Mat response(responseHeight, responseWidth, CV_32FC1);
-    Stream stream;
-    DeviceBuffer deviceSearch(continuousSearch.total());
-    DeviceBuffer deviceModel(continuousModel.total());
-    DeviceBuffer deviceResponse(response.total() * response.elemSize());
-    check(cudaMemcpyAsync(deviceSearch.get(), continuousSearch.data, continuousSearch.total(),
-                          cudaMemcpyHostToDevice, stream.get()));
-    check(cudaMemcpyAsync(deviceModel.get(), continuousModel.data, continuousModel.total(),
-                          cudaMemcpyHostToDevice, stream.get()));
+    thread_local Workspace workspace;
+    workspace.reserveSearch(continuousSearch.total());
+    workspace.reserveModel(continuousModel.total());
+    workspace.reserveResponse(response.total() * response.elemSize());
+    check(cudaMemcpyAsync(workspace.search(), continuousSearch.data, continuousSearch.total(),
+                          cudaMemcpyHostToDevice, workspace.stream()));
+    check(cudaMemcpyAsync(workspace.model(), continuousModel.data, continuousModel.total(),
+                          cudaMemcpyHostToDevice, workspace.stream()));
     const dim3 block(16, 16);
     const dim3 grid((responseWidth + block.x - 1) / block.x,
                     (responseHeight + block.y - 1) / block.y);
-    nccKernel<<<grid, block, 0, stream.get()>>>(
-        static_cast<const unsigned char*>(deviceSearch.get()), search.cols,
-        static_cast<const unsigned char*>(deviceModel.get()), model.cols, model.rows,
-        static_cast<float*>(deviceResponse.get()), responseWidth, responseHeight);
+    nccKernel<<<grid, block, 0, workspace.stream()>>>(
+        static_cast<const unsigned char*>(workspace.search()), search.cols,
+        static_cast<const unsigned char*>(workspace.model()), model.cols, model.rows,
+        static_cast<float*>(workspace.response()), responseWidth, responseHeight);
     check(cudaGetLastError());
-    check(cudaMemcpyAsync(response.data, deviceResponse.get(),
+    check(cudaMemcpyAsync(response.data, workspace.response(),
                           response.total() * response.elemSize(), cudaMemcpyDeviceToHost,
-                          stream.get()));
-    check(cudaStreamSynchronize(stream.get()));
+                          workspace.stream()));
+    check(cudaStreamSynchronize(workspace.stream()));
     return response;
 }
 
