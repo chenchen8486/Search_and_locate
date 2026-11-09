@@ -24,7 +24,6 @@ protected:
     BOOL OnInitDialog() override;
     afx_msg void OnLoadSearch();
     afx_msg void OnLoadTemplate();
-    afx_msg void OnSelectTemplate();
     afx_msg void OnSelectRoi();
     afx_msg void OnClearRoi();
     afx_msg void OnExecute();
@@ -74,7 +73,6 @@ private:
     int dpiY_ = 96;
     int activeInspectorPage_ = -1;
     bool batchResults_ = false;
-    bool selectionForRoi_ = false;
     bool useRoi_ = false;
     LocatorRect roi_ = { 0, 0, 0, 0 };
     std::function<void()> selfTestAction_;

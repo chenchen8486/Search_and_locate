@@ -74,7 +74,6 @@ CLocatorMfcDlg::CLocatorMfcDlg(CWnd* parent)
 BEGIN_MESSAGE_MAP(CLocatorMfcDlg, CDialogEx)
     ON_BN_CLICKED(IDC_LOAD_SEARCH, &CLocatorMfcDlg::OnLoadSearch)
     ON_BN_CLICKED(IDC_LOAD_TEMPLATE, &CLocatorMfcDlg::OnLoadTemplate)
-    ON_BN_CLICKED(IDC_SELECT_TEMPLATE, &CLocatorMfcDlg::OnSelectTemplate)
     ON_BN_CLICKED(IDC_SELECT_ROI, &CLocatorMfcDlg::OnSelectRoi)
     ON_BN_CLICKED(IDC_CLEAR_ROI, &CLocatorMfcDlg::OnClearRoi)
     ON_BN_CLICKED(IDC_EXECUTE, &CLocatorMfcDlg::OnExecute)
@@ -300,12 +299,11 @@ void CLocatorMfcDlg::applyLayout()
     const int toolbarGap = sx(8);
     const int toolRows = innerWidth >= sx(760) ? 1 : 2;
     const int toolHeight = sy(32);
-    const int toolIds[] = { IDC_LOAD_SEARCH, IDC_LOAD_TEMPLATE, IDC_SELECT_TEMPLATE,
-                            IDC_SELECT_ROI, IDC_CLEAR_ROI };
-    for (int index = 0; index < 5; ++index) {
-        const int row = toolRows == 2 ? index / 3 : 0;
-        const int column = toolRows == 2 ? index % 3 : index;
-        const int count = row == 1 ? 2 : (toolRows == 2 ? 3 : 5);
+    const int toolIds[] = { IDC_LOAD_SEARCH, IDC_LOAD_TEMPLATE, IDC_SELECT_ROI, IDC_CLEAR_ROI };
+    for (int index = 0; index < 4; ++index) {
+        const int row = toolRows == 2 ? index / 2 : 0;
+        const int column = toolRows == 2 ? index % 2 : index;
+        const int count = toolRows == 2 ? 2 : 4;
         const int buttonWidth = (innerWidth - toolbarGap * (count - 1)) / count;
         place(toolIds[index], box(innerLeft + column * (buttonWidth + toolbarGap),
             toolbarY + row * (toolHeight + toolbarGap), buttonWidth, toolHeight));
@@ -596,24 +594,12 @@ void CLocatorMfcDlg::OnLoadTemplate()
     SetDlgItemText(IDC_STATUS_TEXT, L"模板已加载");
 }
 
-void CLocatorMfcDlg::OnSelectTemplate()
-{
-    if (searchImage_.empty()) {
-        AfxMessageBox(L"请先加载用于框选模板的大图");
-        return;
-    }
-    selectionForRoi_ = false;
-    searchView_.setSelectionEnabled(true);
-    SetDlgItemText(IDC_STATUS_TEXT, L"在搜索图上拖动鼠标框选模板");
-}
-
 void CLocatorMfcDlg::OnSelectRoi()
 {
     if (searchImage_.empty()) {
         AfxMessageBox(L"请先加载搜索图");
         return;
     }
-    selectionForRoi_ = true;
     searchView_.setSelectionEnabled(true);
     SetDlgItemText(IDC_STATUS_TEXT, L"在搜索图上拖动鼠标框选 ROI");
 }
@@ -636,23 +622,10 @@ LRESULT CLocatorMfcDlg::OnImageSelectionChanged(WPARAM wParam, LPARAM lParam)
     if (selection.empty()) {
         return 0;
     }
-
-    if (selectionForRoi_) {
-        roi_ = { selection.x, selection.y, selection.width, selection.height };
-        useRoi_ = true;
-        clearResultDisplay();
-        SetDlgItemText(IDC_STATUS_TEXT, CString(L"ROI 已设置"));
-    } else {
-        searchImage_(selection).copyTo(modelImage_);
-        templateView_.setImage(modelImage_);
-        clearResultDisplay();
-        CString dimensions;
-        dimensions.Format(L"%d × %d", modelImage_.cols, modelImage_.rows);
-        SetDlgItemText(IDC_IMAGE_META_TEMPLATE, dimensions);
-        SetDlgItemText(IDC_TEMPLATE_PATH, L"来自搜索图框选");
-        SetDlgItemText(IDC_STATUS_TEXT, L"已从大图生成模板");
-        searchView_.clearSelection();
-    }
+    roi_ = { selection.x, selection.y, selection.width, selection.height };
+    useRoi_ = true;
+    clearResultDisplay();
+    SetDlgItemText(IDC_STATUS_TEXT, CString(L"ROI 已设置"));
     searchView_.setSelectionEnabled(false);
     return 0;
 }
@@ -970,6 +943,8 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
         }
     };
     ShowWindow(SW_HIDE);
+    require(GetDlgItem(IDC_SELECT_TEMPLATE) == nullptr,
+            "模板只能通过单独加载图片指定，不应保留框选模板控件");
     searchImage_ = search;
     modelImage_ = model;
     searchView_.setImage(searchImage_);
@@ -1146,7 +1121,7 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     require((GetDlgItem(IDC_EXECUTE)->GetStyle() & BS_TYPEMASK) == BS_OWNERDRAW &&
             (GetDlgItem(IDC_BATCH_RUN)->GetStyle() & BS_TYPEMASK) == BS_OWNERDRAW,
             "主要操作按钮缺少统一的自绘样式");
-    const int toolIds[] = { IDC_LOAD_SEARCH, IDC_LOAD_TEMPLATE, IDC_SELECT_TEMPLATE,
+    const int toolIds[] = { IDC_LOAD_SEARCH, IDC_LOAD_TEMPLATE,
                             IDC_SELECT_ROI, IDC_CLEAR_ROI };
     const int firstToolWidth = controlRect(IDC_LOAD_SEARCH).Width();
     for (int id : toolIds) {
@@ -1316,7 +1291,7 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     const CString firstResult = resultsList_.GetItemText(0, 0);
     const int rightMargin = client.right - originalParameters.right;
     const int flexibleIds[] = {
-        IDC_LOAD_SEARCH, IDC_LOAD_TEMPLATE, IDC_SELECT_TEMPLATE, IDC_SELECT_ROI,
+        IDC_LOAD_SEARCH, IDC_LOAD_TEMPLATE, IDC_SELECT_ROI,
         IDC_CLEAR_ROI, IDC_SEARCH_PATH, IDC_TEMPLATE_PATH, IDC_STATUS_TEXT,
         IDC_TEMPLATE_VIEW, IDC_ANGLE_MIN, IDC_ANGLE_MAX, IDC_ANGLE_STEP,
         IDC_SCALE_MIN, IDC_SCALE_MAX, IDC_SCALE_STEP, IDC_PYRAMID, IDC_SUBPIXEL,
