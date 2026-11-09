@@ -19,6 +19,23 @@ namespace {
 
 constexpr UINT WM_LOCATOR_SELF_TEST = WM_APP + 202;
 
+int dividerPaintCount = 0;
+int imagePaintCount = 0;
+
+LRESULT CALLBACK countControlPaint(HWND window, UINT message, WPARAM wParam,
+                                   LPARAM lParam, UINT_PTR, DWORD_PTR)
+{
+    if (message == WM_PAINT) {
+        const int id = ::GetDlgCtrlID(window);
+        if (id == IDC_DIVIDER_ANGLE) {
+            ++dividerPaintCount;
+        } else if (id == IDC_SEARCH_VIEW) {
+            ++imagePaintCount;
+        }
+    }
+    return DefSubclassProc(window, message, wParam, lParam);
+}
+
 bool readDouble(CWnd* window, int id, double& value)
 {
     CString text;
@@ -417,12 +434,13 @@ void CLocatorMfcDlg::applyLayout()
         deferred = next;
     }
     EndDeferWindowPos(deferred);
-    modeTabs_.RedrawWindow(nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
     resizeResultColumns();
     CRect statsClient;
     batchStats_.GetClientRect(&statsClient);
     batchStats_.SetColumnWidth(0, statsClient.Width() * 45 / 100);
     batchStats_.SetColumnWidth(1, statsClient.Width() * 55 / 100 - 2);
+    RedrawWindow(nullptr, nullptr,
+        RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_FRAME);
 }
 
 void CLocatorMfcDlg::OnSize(UINT type, int width, int height)
@@ -1081,6 +1099,17 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     require(tabs != nullptr && tabs->SendMessage(TCM_GETITEMCOUNT) == 2,
             "右侧缺少搜索参数与批量评估原生页签");
     require(tabs->SendMessage(TCM_GETCURSEL) == 0, "默认页签不是搜索参数");
+    SetWindowSubclass(GetDlgItem(IDC_DIVIDER_ANGLE)->GetSafeHwnd(), countControlPaint, 1, 0);
+    SetWindowSubclass(GetDlgItem(IDC_SEARCH_VIEW)->GetSafeHwnd(), countControlPaint, 1, 0);
+    ShowWindow(SW_SHOWNOACTIVATE);
+    RedrawWindow(nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    dividerPaintCount = 0;
+    imagePaintCount = 0;
+    applyLayout();
+    require(dividerPaintCount > 0 && imagePaintCount > 0,
+            (std::string("布局后分割线和图像控件没有统一重绘，次数=") +
+             std::to_string(dividerPaintCount) + "/" + std::to_string(imagePaintCount)).c_str());
+    ShowWindow(SW_HIDE);
     const int searchControls[] = { IDC_ANGLE_MIN, IDC_SCALE_MIN, IDC_SUBPIXEL, IDC_EXECUTE };
     const int batchControls[] = { IDC_BATCH_PATH, IDC_BATCH_RUN, IDC_BATCH_STATS };
     const char* pageStage = "初始化";
