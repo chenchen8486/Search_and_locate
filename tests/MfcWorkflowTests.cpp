@@ -4,6 +4,7 @@
 
 #include <opencv2/core.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
 #include <fstream>
@@ -72,6 +73,30 @@ void testMfcWorkflowBatchReport()
            csv.find("1,无匹配") != std::string::npos &&
            csv.find("2,执行错误") != std::string::npos,
            "CSV 导出未保留任务状态、匹配字段或 UTF-8 BOM");
+    std::remove(path.c_str());
+}
+
+void testMfcWorkflowFixedBenchmark()
+{
+    const std::vector<ThickPair> pairs = findThickPairs(realDataDirectory());
+    BatchDataSet data = makeBenchmarkTasks(pairs, 197);
+    const LocatorWorkflow::BenchmarkRun run =
+        LocatorWorkflow::runFixedBenchmark(data.tasks, 4, 2, 5);
+    expect(run.warmupMs.size() == 2 && run.roundMs.size() == 5,
+           "固定基准预热或记录轮数错误");
+    expect(run.firstRoundMs == run.warmupMs[0] && run.taskCount == 197 && run.pairCount == 197,
+           "固定基准首轮或任务组成错误");
+    expect(run.finalRun.results.size() == 197, "固定基准最终结果数量错误");
+    const auto range = std::minmax_element(run.roundMs.begin(), run.roundMs.end());
+    expect(run.medianMs >= *range.first && run.medianMs <= *range.second,
+           "固定基准中位数超出逐轮范围");
+    const std::string path = "temp/t34_fixed_benchmark.csv";
+    LocatorWorkflow::exportBenchmarkCsv(path, run);
+    std::ifstream input(path, std::ios::binary);
+    const std::string csv((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    expect(csv.find("\xEF\xBB\xBF") == 0 && csv.find("0,预热") != std::string::npos &&
+           csv.find("0,记录") != std::string::npos && csv.find("4,记录") != std::string::npos,
+           "固定基准未导出预热和逐轮原始耗时");
     std::remove(path.c_str());
 }
 

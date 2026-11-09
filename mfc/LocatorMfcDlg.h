@@ -38,6 +38,8 @@ protected:
     afx_msg void OnBatchRun();
     afx_msg void OnBatchCancel();
     afx_msg void OnBatchExport();
+    afx_msg void OnBatchBenchmark();
+    afx_msg void OnBenchmarkExport();
     afx_msg void OnBatchFilterChanged();
     afx_msg void OnModeTabsChanged(NMHDR* header, LRESULT* result);
     afx_msg void OnResultItemChanged(NMHDR* header, LRESULT* result);
@@ -76,13 +78,14 @@ private:
     void showSingleResult(const LocatorWorkflow::SingleResult& run);
     void clearBatchResultDisplay();
     void showBatchResult(const LocatorWorkflow::BatchRun& run);
+    void showBenchmarkResult();
     void populateBatchResults();
     void prepareResultList(bool batch);
     void resizeResultColumns();
     void initializeLayout();
     void applyLayout();
     void showInspectorPage(int page);
-    void setBatchStats(const std::vector<CString>& values);
+    void setBatchStats(const std::vector<CString>& values, bool benchmark = false);
     void clearResultDisplay();
     void showError(LocatorError error);
     void savePreview(const wchar_t* path);
@@ -115,6 +118,8 @@ private:
     LocatorRect roi_ = { 0, 0, 0, 0 };
     std::vector<BatchResult> batchResultData_;
     std::vector<BatchResult> displayedBatchResults_;
+    LocatorWorkflow::BenchmarkRun benchmarkData_;
+    bool hasBenchmark_ = false;
     std::thread singleWorker_;
     bool singleRunning_ = false;
     unsigned singleGeneration_ = 0;

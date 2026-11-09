@@ -119,6 +119,8 @@ BEGIN_MESSAGE_MAP(CLocatorMfcDlg, CDialogEx)
     ON_BN_CLICKED(IDC_BATCH_RUN, &CLocatorMfcDlg::OnBatchRun)
     ON_BN_CLICKED(IDC_BATCH_CANCEL, &CLocatorMfcDlg::OnBatchCancel)
     ON_BN_CLICKED(IDC_BATCH_EXPORT, &CLocatorMfcDlg::OnBatchExport)
+    ON_BN_CLICKED(IDC_BATCH_BENCHMARK, &CLocatorMfcDlg::OnBatchBenchmark)
+    ON_BN_CLICKED(IDC_BENCHMARK_EXPORT, &CLocatorMfcDlg::OnBenchmarkExport)
     ON_CBN_SELCHANGE(IDC_BATCH_FILTER, &CLocatorMfcDlg::OnBatchFilterChanged)
     ON_CONTROL_RANGE(EN_CHANGE, IDC_ANGLE_MIN, IDC_Y_VICINITY, &CLocatorMfcDlg::OnParameterChanged)
     ON_CBN_SELCHANGE(IDC_BACKEND, &CLocatorMfcDlg::OnChoiceChanged)
@@ -279,14 +281,14 @@ void CLocatorMfcDlg::OnModeTabsChanged(NMHDR* header, LRESULT* result)
     *result = 0;
 }
 
-void CLocatorMfcDlg::setBatchStats(const std::vector<CString>& values)
+void CLocatorMfcDlg::setBatchStats(const std::vector<CString>& values, bool benchmark)
 {
     if (values.size() != 7) {
         throw std::invalid_argument("批量统计必须有七项");
     }
     const wchar_t* labels[] = {
         L"总任务数", L"成功 / 无匹配 / 错误", L"预处理均值", L"搜索均值",
-        L"整体均值", L"P99", L"总耗时"
+        L"整体均值", L"P99", benchmark ? L"50 轮中位数" : L"总耗时"
     };
     batchStats_.DeleteAllItems();
     for (int row = 0; row < 7; ++row) {
@@ -387,10 +389,16 @@ void CLocatorMfcDlg::applyLayout()
 
     place(IDC_RESULTS_TITLE, box(results.left + sx(12), results.top + sy(10), sx(90), sy(20)));
     const int exportWidth = sx(116);
+    const int benchmarkWidth = sx(96);
+    const int rawExportWidth = sx(116);
+    const int exportX = results.right - sx(12) - exportWidth;
+    const int benchmarkX = exportX - sx(8) - benchmarkWidth;
     place(IDC_RESULT_HINT, box(results.left + sx(112), results.top + sy(12),
-        results.Width() - sx(124) - exportWidth - sx(8), sy(18)));
-    place(IDC_BATCH_EXPORT, box(results.right - sx(12) - exportWidth,
-        results.top + sy(8), exportWidth, sy(24)));
+        results.Width() - sx(124) - rawExportWidth - benchmarkWidth - exportWidth - sx(24), sy(18)));
+    place(IDC_BENCHMARK_EXPORT, box(benchmarkX - sx(8) - rawExportWidth,
+        results.top + sy(8), rawExportWidth, sy(24)));
+    place(IDC_BATCH_BENCHMARK, box(benchmarkX, results.top + sy(8), benchmarkWidth, sy(24)));
+    place(IDC_BATCH_EXPORT, box(exportX, results.top + sy(8), exportWidth, sy(24)));
     const int roiLabels[] = { IDC_ROI_X_LABEL, IDC_ROI_Y_LABEL, IDC_ROI_WIDTH_LABEL, IDC_ROI_HEIGHT_LABEL };
     const int roiEdits[] = { IDC_ROI_X, IDC_ROI_Y, IDC_ROI_WIDTH, IDC_ROI_HEIGHT };
     const int roiLeft = results.left + sx(12);
@@ -1246,23 +1254,27 @@ void CLocatorMfcDlg::OnBatchBrowse()
 void CLocatorMfcDlg::setBatchControlsEnabled(bool enabled)
 {
     const int ids[] = { IDC_BATCH_PATH, IDC_BATCH_BROWSE, IDC_BATCH_COUNT,
-                        IDC_BATCH_THREADS, IDC_BATCH_RUN, IDC_BATCH_FILTER };
+                        IDC_BATCH_THREADS, IDC_BATCH_RUN, IDC_BATCH_FILTER, IDC_BATCH_BENCHMARK };
     for (int id : ids) {
         GetDlgItem(id)->EnableWindow(enabled);
     }
     GetDlgItem(IDC_BATCH_CANCEL)->EnableWindow(!enabled && batchRunning_);
     GetDlgItem(IDC_BATCH_EXPORT)->EnableWindow(enabled && batchResults_ && !batchResultData_.empty());
+    GetDlgItem(IDC_BENCHMARK_EXPORT)->EnableWindow(enabled && hasBenchmark_);
 }
 
 void CLocatorMfcDlg::clearBatchResultDisplay()
 {
     batchResultData_.clear();
     displayedBatchResults_.clear();
+    benchmarkData_ = LocatorWorkflow::BenchmarkRun();
+    hasBenchmark_ = false;
     batchFilter_.SetCurSel(0);
     prepareResultList(true);
     setBatchStats(std::vector<CString>(7, CString(L"本次未产生")));
     SetDlgItemText(IDC_BATCH_PROGRESS, L"等待本次执行");
     GetDlgItem(IDC_BATCH_EXPORT)->EnableWindow(FALSE);
+    GetDlgItem(IDC_BENCHMARK_EXPORT)->EnableWindow(FALSE);
 }
 
 void CLocatorMfcDlg::populateBatchResults()
@@ -1375,6 +1387,116 @@ void CLocatorMfcDlg::OnBatchCancel()
         batchCancelRequested_ = true;
         GetDlgItem(IDC_BATCH_CANCEL)->EnableWindow(FALSE);
         SetDlgItemText(IDC_STATUS_TEXT, L"正在取消，当前任务或 CUDA 分组完成后停止");
+    }
+}
+
+void CLocatorMfcDlg::showBenchmarkResult()
+{
+    batchResultData_ = benchmarkData_.finalRun.results;
+    populateBatchResults();
+    const LocatorWorkflow::BatchSummary summary =
+        LocatorWorkflow::summarizeBatch(benchmarkData_.finalRun);
+    std::vector<CString> statistics;
+    CString value;
+    value.Format(L"%d / %d", benchmarkData_.taskCount, benchmarkData_.taskCount);
+    statistics.push_back(value);
+    value.Format(L"%d / %d / %d", summary.matched, summary.noMatch, summary.errors);
+    statistics.push_back(value);
+    const auto statistic = [&statistics](double number) {
+        CString value;
+        value.Format(L"%.3f ms", number);
+        statistics.push_back(value);
+    };
+    statistic(summary.preprocessMeanMs);
+    statistic(summary.searchMeanMs);
+    statistic(summary.totalMeanMs);
+    statistic(summary.p99Ms);
+    statistic(benchmarkData_.medianMs);
+    setBatchStats(statistics, true);
+    SetDlgItemText(IDC_BATCH_CONFIG_HINT,
+        CString(L"固定口径：完整图 | 角度 0° | 尺度 1\n"
+                L"金字塔=1 | 亚像素=1/4 | 最低分=0 | Top-N=1 | 去重=(0,0)px\n") +
+        (backendCombo_.GetCurSel() == 1 ? CString(L"后端=GPU") : CString(L"后端=CPU")) +
+        L" | 预热 5 轮 | 记录 50 轮");
+    CString progress;
+    progress.Format(L"500 任务 / %d 对 | 中位 %.3f ms", benchmarkData_.pairCount,
+                    benchmarkData_.medianMs);
+    SetDlgItemText(IDC_BATCH_PROGRESS, progress);
+    CString status;
+    status.Format(L"固定基准完成：首轮 %.3f ms，50 轮整体中位数 %.3f ms，可导出原始耗时",
+                  benchmarkData_.firstRoundMs, benchmarkData_.medianMs);
+    SetDlgItemText(IDC_STATUS_TEXT, status);
+    GetDlgItem(IDC_BENCHMARK_EXPORT)->EnableWindow(TRUE);
+}
+
+void CLocatorMfcDlg::OnBatchBenchmark()
+{
+    if (batchRunning_ || singleRunning_) {
+        return;
+    }
+    CString directory;
+    GetDlgItemText(IDC_BATCH_PATH, directory);
+    directory.Trim();
+    int threads = 0;
+    if (directory.IsEmpty() || !readInt(this, IDC_BATCH_THREADS, threads)) {
+        SetDlgItemText(IDC_STATUS_TEXT, L"固定基准需要有效的 Thick 目录和整数线程数");
+        return;
+    }
+    showInspectorPage(1);
+    clearBatchResultDisplay();
+    batchRunning_ = true;
+    setBatchControlsEnabled(false);
+    GetDlgItem(IDC_BATCH_CANCEL)->EnableWindow(FALSE);
+    setSingleControlsEnabled(false);
+    SetDlgItemText(IDC_STATUS_TEXT, L"固定基准运行中：500 任务，预热 5 轮，记录 50 轮");
+    RedrawWindow(nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    CWaitCursor wait;
+    try {
+        const std::string path(CT2A(directory.GetString(), CP_ACP));
+        const std::vector<ThickPair> pairs = findThickPairs(path);
+        BatchDataSet data = makeBenchmarkTasks(pairs, 500);
+        LocatorConfig fixed;
+        fixed.backend = backendCombo_.GetCurSel() == 1 ? LocatorBackend::Gpu : LocatorBackend::Cpu;
+        fixed.subPixelResolution = 4;
+        for (BatchTask& task : data.tasks) {
+            task.config = fixed;
+        }
+        benchmarkData_ = LocatorWorkflow::runFixedBenchmark(
+            data.tasks, threads, 5, 50, static_cast<int>(pairs.size()));
+        hasBenchmark_ = true;
+        showBenchmarkResult();
+    } catch (const std::exception& error) {
+        clearBatchResultDisplay();
+        const CString message(CA2W(error.what(), CP_UTF8));
+        SetDlgItemText(IDC_STATUS_TEXT, L"固定基准失败：" + message);
+    } catch (...) {
+        clearBatchResultDisplay();
+        SetDlgItemText(IDC_STATUS_TEXT, L"固定基准失败：未知异常");
+    }
+    batchRunning_ = false;
+    setBatchControlsEnabled(true);
+    setSingleControlsEnabled(true);
+}
+
+void CLocatorMfcDlg::OnBenchmarkExport()
+{
+    if (!hasBenchmark_ || batchRunning_) {
+        return;
+    }
+    CFileDialog dialog(FALSE, L"csv", L"fixed_benchmark.csv", OFN_OVERWRITEPROMPT,
+                       L"CSV 文件 (*.csv)|*.csv||", this);
+    if (dialog.DoModal() != IDOK) {
+        return;
+    }
+    const CString path = dialog.GetPathName();
+    try {
+        LocatorWorkflow::exportBenchmarkCsv(std::string(CT2A(path.GetString(), CP_ACP)),
+                                            benchmarkData_);
+        SetDlgItemText(IDC_STATUS_TEXT, L"固定基准原始耗时已导出：" + path);
+    } catch (const std::exception& error) {
+        const CString message(CA2W(error.what(), CP_UTF8));
+        SetDlgItemText(IDC_STATUS_TEXT, message);
+        AfxMessageBox(message);
     }
 }
 
@@ -1947,7 +2069,10 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
             const int textHeight = dc.GetTextExtent(L"定位").cy * lineCount;
             dc.SelectObject(oldFont);
             require(textWidth <= rect.Width() - 6 && textHeight <= rect.Height(),
-                    "说明或按钮文字被裁切");
+                    (std::string("说明或按钮文字被裁切，ID=") + std::to_string(id) +
+                     "，文字宽=" + std::to_string(textWidth) + "，可用宽=" +
+                     std::to_string(rect.Width() - 6) + "，文字高=" + std::to_string(textHeight) +
+                     "，可用高=" + std::to_string(rect.Height())).c_str());
         }
     };
     validateVisibleLayout(false);
@@ -2367,6 +2492,31 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
         const std::wstring batchPreview = std::wstring(previewPath) + L".batch.png";
         savePreview(batchPreview.c_str());
         showInspectorPage(0);
+    }
+    OnBatchBenchmark();
+    CString benchmarkStatus;
+    GetDlgItemText(IDC_STATUS_TEXT, benchmarkStatus);
+    const std::string benchmarkDetail = "有效=" + std::to_string(hasBenchmark_) +
+        "，预热=" + std::to_string(benchmarkData_.warmupMs.size()) +
+        "，记录=" + std::to_string(benchmarkData_.roundMs.size()) +
+        "，任务=" + std::to_string(benchmarkData_.taskCount) +
+        "，图像对=" + std::to_string(benchmarkData_.pairCount) +
+        "，结果=" + std::to_string(benchmarkData_.finalRun.results.size()) + "，状态=" +
+        std::string(CT2A(benchmarkStatus.GetString(), CP_UTF8));
+    require(hasBenchmark_ && benchmarkData_.warmupMs.size() == 5 &&
+            benchmarkData_.roundMs.size() == 50 && benchmarkData_.taskCount == 500 &&
+            benchmarkData_.pairCount == 197 && benchmarkData_.finalRun.results.size() == 500,
+            (std::string("界面固定基准没有按 5 轮预热、50 轮记录执行 500 任务，") +
+             benchmarkDetail).c_str());
+    require(batchStats_.GetItemText(0, 1) == L"500 / 500" &&
+            batchStats_.GetItemText(6, 0) == L"50 轮中位数" &&
+            GetDlgItem(IDC_BENCHMARK_EXPORT)->IsWindowEnabled(),
+            "界面固定基准统计或原始耗时导出入口错误");
+    LocatorWorkflow::exportBenchmarkCsv(backend == LocatorBackend::Gpu
+        ? "temp/t34_gpu_benchmark.csv" : "temp/t34_cpu_benchmark.csv", benchmarkData_);
+    if (previewPath != nullptr && *previewPath != L'\0') {
+        const std::wstring benchmarkPreview = std::wstring(previewPath) + L".benchmark.png";
+        savePreview(benchmarkPreview.c_str());
     }
     SetDlgItemText(IDC_BATCH_COUNT, L"500");
     OnBatchRun();

@@ -28,6 +28,20 @@ struct BatchRun {
     std::string diagnostic;
 };
 
+struct BenchmarkRun {
+    std::vector<double> warmupMs;
+    std::vector<double> roundMs;
+    double firstRoundMs = 0.0;
+    double medianMs = 0.0;
+    int taskCount = 0;
+    int pairCount = 0;
+    BatchRun finalRun;
+};
+
+BenchmarkRun runFixedBenchmark(const std::vector<BatchTask>& tasks, int threads,
+                               int warmupRounds, int measuredRounds, int sourcePairCount = 0);
+void exportBenchmarkCsv(const std::string& path, const BenchmarkRun& run);
+
 enum class BatchFilter {
     All = 0,
     Matched,
