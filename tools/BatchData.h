@@ -20,5 +20,5 @@ struct BatchDataSet {
 };
 
 std::vector<ThickPair> findThickPairs(const std::string& directory);
-bool loadGrayImage(const std::string& path, cv::Mat& image);
+bool loadGrayImage(const std::string& path, cv::Mat& image, std::string* error = nullptr);
 BatchDataSet makeBenchmarkTasks(const std::vector<ThickPair>& pairs, int count);

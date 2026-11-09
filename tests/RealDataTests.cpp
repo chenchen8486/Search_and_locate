@@ -6,6 +6,7 @@
 
 #include <cstdio>
 #include <direct.h>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -29,6 +30,42 @@ void testThickPairs()
         expect(search.type() == CV_8UC1, prefix + "搜索图应为 CV_8UC1");
         expect(kernel.type() == CV_8UC1, prefix + "定位核应为 CV_8UC1");
     }
+}
+
+void testStrictGrayImageLoading()
+{
+    const std::string directory = batchDataTempDirectory();
+    _mkdir(directory.c_str());
+    const std::string grayPath = directory + "/valid-gray.bmp";
+    const std::string colorPath = directory + "/invalid-color.bmp";
+    const std::string brokenPath = directory + "/broken.bmp";
+    expect(cv::imwrite(grayPath, cv::Mat(3, 2, CV_8UC1, cv::Scalar(91))),
+           "合法灰度测试图写入失败");
+    expect(cv::imwrite(colorPath, cv::Mat(3, 2, CV_8UC3, cv::Scalar(1, 2, 3))),
+           "彩色测试图写入失败");
+    {
+        std::ofstream broken(brokenPath, std::ios::binary | std::ios::trunc);
+        broken << "BM\\0broken";
+    }
+
+    cv::Mat image;
+    expect(loadGrayImage(grayPath, image) && image.type() == CV_8UC1 &&
+           image.rows == 3 && image.cols == 2, "合法 8 位灰度图读取失败");
+    std::string error;
+    expect(!loadGrayImage(colorPath, image, &error) && error.find("单通道") != std::string::npos,
+           "24 位彩色图必须拒绝并说明原始格式");
+    expect(image.rows == 3 && image.cols == 2 && image.type() == CV_8UC1 &&
+           cv::countNonZero(image != 91) == 0, "彩色图加载失败后替换了当前有效图像");
+    error.clear();
+    expect(!loadGrayImage(brokenPath, image, &error) && !error.empty(),
+           "损坏图片必须返回明确错误");
+    expect(image.rows == 3 && image.cols == 2 && cv::countNonZero(image != 91) == 0,
+           "损坏图片加载失败后替换了当前有效图像");
+
+    std::remove(grayPath.c_str());
+    std::remove(colorPath.c_str());
+    std::remove(brokenPath.c_str());
+    _rmdir(directory.c_str());
 }
 
 void testPairingErrors()

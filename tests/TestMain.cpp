@@ -10,6 +10,7 @@
 
 void testThickPairs();
 void testPairingErrors();
+void testStrictGrayImageLoading();
 void testNccExactLocation();
 void testNccSameSizeScore();
 void testNccSameSizeMatch();
@@ -145,6 +146,7 @@ const TestCase tests[] = {
     { "Execute.NotInitialized", testExecuteNotInitialized },
     { "Data.ThickPairs", testThickPairs },
     { "Data.PairingErrors", testPairingErrors },
+    { "Data.StrictGrayLoading", testStrictGrayImageLoading },
     { "Ncc.ExactLocation", testNccExactLocation },
     { "Ncc.SameSizeScore", testNccSameSizeScore },
     { "Ncc.SameSizeMatch", testNccSameSizeMatch },

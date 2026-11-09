@@ -106,21 +106,44 @@ std::vector<ThickPair> findThickPairs(const std::string& directory)
     return pairs;
 }
 
-bool loadGrayImage(const std::string& path, cv::Mat& image)
+bool loadGrayImage(const std::string& path, cv::Mat& image, std::string* error)
 {
-    image.release();
+    if (error != nullptr) {
+        error->clear();
+    }
     std::ifstream input(path.c_str(), std::ios::binary);
     if (!input.good()) {
+        if (error != nullptr) {
+            *error = "文件不存在或无法读取：" + path;
+        }
         return false;
     }
     input.close();
 
+    cv::Mat decoded;
     try {
-        image = cv::imread(path, cv::IMREAD_GRAYSCALE);
-    } catch (const cv::Exception&) {
-        image.release();
+        decoded = cv::imread(path, cv::IMREAD_UNCHANGED);
+    } catch (const cv::Exception& exception) {
+        if (error != nullptr) {
+            *error = std::string("图片解码异常：") + exception.what();
+        }
+        return false;
     }
-    return !image.empty() && image.type() == CV_8UC1;
+    if (decoded.empty()) {
+        if (error != nullptr) {
+            *error = "图片损坏或格式无法解码：" + path;
+        }
+        return false;
+    }
+    if (decoded.type() != CV_8UC1) {
+        if (error != nullptr) {
+            *error = "原始图片不是 8 位单通道，通道数为 " + std::to_string(decoded.channels()) +
+                     "，深度类型为 " + std::to_string(decoded.depth());
+        }
+        return false;
+    }
+    image = decoded;
+    return true;
 }
 
 BatchDataSet makeBenchmarkTasks(const std::vector<ThickPair>& pairs, int count)

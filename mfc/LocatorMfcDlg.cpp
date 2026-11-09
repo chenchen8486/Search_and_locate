@@ -629,8 +629,11 @@ void CLocatorMfcDlg::OnLoadSearch()
 
     const CString path = dialog.GetPathName();
     cv::Mat image;
-    if (!loadGrayImage(std::string(CT2A(path.GetString(), CP_ACP)), image)) {
-        AfxMessageBox(L"搜索图读取失败，请选择有效的 8 位灰度 BMP 文件");
+    std::string loadError;
+    if (!loadGrayImage(std::string(CT2A(path.GetString(), CP_ACP)), image, &loadError)) {
+        const CString message = L"搜索图读取失败：" + CString(CA2W(loadError.c_str(), CP_UTF8));
+        SetDlgItemText(IDC_STATUS_TEXT, message);
+        AfxMessageBox(message);
         return;
     }
     searchImage_ = image;
@@ -655,8 +658,11 @@ void CLocatorMfcDlg::OnLoadTemplate()
 
     const CString path = dialog.GetPathName();
     cv::Mat image;
-    if (!loadGrayImage(std::string(CT2A(path.GetString(), CP_ACP)), image)) {
-        AfxMessageBox(L"模板读取失败，请选择有效的 8 位灰度 BMP 文件");
+    std::string loadError;
+    if (!loadGrayImage(std::string(CT2A(path.GetString(), CP_ACP)), image, &loadError)) {
+        const CString message = L"模板读取失败：" + CString(CA2W(loadError.c_str(), CP_UTF8));
+        SetDlgItemText(IDC_STATUS_TEXT, message);
+        AfxMessageBox(message);
         return;
     }
     modelImage_ = image;
