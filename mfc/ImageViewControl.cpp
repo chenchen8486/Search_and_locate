@@ -34,7 +34,16 @@ void CImageViewControl::setResults(const std::vector<LocatorResult>& results,
     results_ = results;
     modelWidth_ = modelWidth;
     modelHeight_ = modelHeight;
+    selectedResult_ = -1;
+    labelRects_.clear();
     Invalidate();
+}
+
+void CImageViewControl::setSelectedResult(int index)
+{
+    selectedResult_ = index >= 0 && index < static_cast<int>(results_.size()) ? index : -1;
+    Invalidate();
+    UpdateWindow();
 }
 
 void CImageViewControl::setSelectionEnabled(bool enabled)
@@ -214,11 +223,16 @@ void CImageViewControl::OnPaint()
                     reinterpret_cast<BITMAPINFO*>(&info), DIB_RGB_COLORS, SRCCOPY);
 
     CPen resultPen(PS_SOLID, 2, RGB(0, 220, 100));
+    CPen selectedPen(PS_SOLID, 3, RGB(0, 200, 255));
     CPen* oldPen = dc.SelectObject(&resultPen);
     CBrush* oldBrush = static_cast<CBrush*>(dc.SelectStockObject(HOLLOW_BRUSH));
     dc.SetBkMode(TRANSPARENT);
-    dc.SetTextColor(RGB(0, 255, 120));
-    for (const LocatorResult& result : results_) {
+    labelRects_.clear();
+    for (int resultIndex = 0; resultIndex < static_cast<int>(results_.size()); ++resultIndex) {
+        const LocatorResult& result = results_[resultIndex];
+        const bool selected = resultIndex == selectedResult_;
+        dc.SelectObject(selected ? &selectedPen : &resultPen);
+        dc.SetTextColor(selected ? RGB(0, 220, 255) : RGB(0, 255, 120));
         const double halfWidth = modelWidth_ * result.scale / 2.0;
         const double halfHeight = modelHeight_ * result.scale / 2.0;
         const double cosine = std::cos(result.angle * kPi / 180.0);
@@ -239,8 +253,36 @@ void CImageViewControl::OnPaint()
         dc.MoveTo(center.x, center.y - 6);
         dc.LineTo(center.x, center.y + 6);
         CString label;
-        label.Format(L"角度 %.2f，尺度 %.3f，分数 %.2f", result.angle, result.scale, result.score);
-        dc.TextOutW(center.x + 8, center.y + 8, label);
+        label.Format(L"#%d  角度 %.2f，尺度 %.3f，分数 %.2f",
+                     resultIndex + 1, result.angle, result.scale, result.score);
+        const CSize textSize = dc.GetTextExtent(label);
+        const int offsets[4][2] = {
+            { 8, 8 }, { -textSize.cx - 8, 8 },
+            { 8, -textSize.cy - 8 }, { -textSize.cx - 8, -textSize.cy - 8 }
+        };
+        CRect placedLabel;
+        for (const auto& offset : offsets) {
+            const int left = std::max(client.left, std::min(center.x + offset[0],
+                                                           client.right - textSize.cx));
+            const int top = std::max(client.top, std::min(center.y + offset[1],
+                                                         client.bottom - textSize.cy));
+            const CRect candidate(left, top, left + textSize.cx, top + textSize.cy);
+            bool overlaps = false;
+            for (const CRect& previous : labelRects_) {
+                if (previous.Width() > 0 && CRect().IntersectRect(candidate, previous)) {
+                    overlaps = true;
+                    break;
+                }
+            }
+            if (!overlaps) {
+                placedLabel = candidate;
+                break;
+            }
+        }
+        if (placedLabel.Width() > 0) {
+            dc.TextOutW(placedLabel.left, placedLabel.top, label);
+        }
+        labelRects_.push_back(placedLabel);
     }
     dc.SelectObject(oldBrush);
     dc.SelectObject(oldPen);

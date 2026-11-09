@@ -18,6 +18,9 @@ public:
     void clearSelection();
     cv::Rect selectedRect() const;
     bool hasResults() const { return !results_.empty(); }
+    void setSelectedResult(int index);
+    int selectedResult() const { return selectedResult_; }
+    const std::vector<CRect>& resultLabelRects() const { return labelRects_; }
 
 protected:
     afx_msg void OnPaint();
@@ -35,6 +38,8 @@ private:
 
     cv::Mat image_;
     std::vector<LocatorResult> results_;
+    std::vector<CRect> labelRects_;
+    int selectedResult_ = -1;
     int modelWidth_ = 0;
     int modelHeight_ = 0;
     CRect bitmapRect_;

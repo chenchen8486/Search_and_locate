@@ -108,6 +108,7 @@ BEGIN_MESSAGE_MAP(CLocatorMfcDlg, CDialogEx)
     ON_CBN_SELCHANGE(IDC_BACKEND, &CLocatorMfcDlg::OnChoiceChanged)
     ON_CBN_SELCHANGE(IDC_SUBPIXEL, &CLocatorMfcDlg::OnChoiceChanged)
     ON_NOTIFY(TCN_SELCHANGE, IDC_MODE_TABS, &CLocatorMfcDlg::OnModeTabsChanged)
+    ON_NOTIFY(LVN_ITEMCHANGED, IDC_RESULT_LIST, &CLocatorMfcDlg::OnResultItemChanged)
     ON_MESSAGE(WM_IMAGE_SELECTION_CHANGED, &CLocatorMfcDlg::OnImageSelectionChanged)
     ON_MESSAGE(WM_LOCATOR_SELF_TEST, &CLocatorMfcDlg::OnSelfTest)
     ON_MESSAGE(WM_LOCATOR_SINGLE_COMPLETE, &CLocatorMfcDlg::OnSingleComplete)
@@ -1006,22 +1007,33 @@ void CLocatorMfcDlg::showSingleResult(const LocatorWorkflow::SingleResult& run)
     for (size_t i = 0; i < results.size(); ++i) {
         const LocatorResult& result = results[i];
         CString value;
-        value.Format(L"%.4f", result.x);
+        value.Format(L"%d", static_cast<int>(i + 1));
         const int row = resultsList_.InsertItem(static_cast<int>(i), value);
-        value.Format(L"%.4f", result.y);
+        value.Format(L"%.4f", result.x);
         resultsList_.SetItemText(row, 1, value);
-        value.Format(L"%.4f", result.angle);
+        value.Format(L"%.4f", result.y);
         resultsList_.SetItemText(row, 2, value);
-        value.Format(L"%.4f", result.scale);
+        value.Format(L"%.4f", result.angle);
         resultsList_.SetItemText(row, 3, value);
-        value.Format(L"%.2f", result.score);
+        value.Format(L"%.4f", result.scale);
         resultsList_.SetItemText(row, 4, value);
+        value.Format(L"%.2f", result.score);
+        resultsList_.SetItemText(row, 5, value);
     }
     searchView_.setResults(results, modelImage_.cols, modelImage_.rows);
     CString status;
     status.Format(L"预处理 %.3f ms，搜索 %.3f ms，整体 %.3f ms，共 %d 个结果",
                   run.preprocessMs, run.searchMs, run.totalMs, static_cast<int>(results.size()));
     SetDlgItemText(IDC_STATUS_TEXT, status);
+}
+
+void CLocatorMfcDlg::OnResultItemChanged(NMHDR* header, LRESULT* result)
+{
+    const NMLISTVIEW* change = reinterpret_cast<const NMLISTVIEW*>(header);
+    if (!batchResults_ && (change->uNewState & LVIS_SELECTED) != 0) {
+        searchView_.setSelectedResult(change->iItem);
+    }
+    *result = 0;
 }
 
 LRESULT CLocatorMfcDlg::OnSingleComplete(WPARAM wParam, LPARAM lParam)
@@ -1064,10 +1076,11 @@ void CLocatorMfcDlg::prepareResultList(bool batch)
     }
     const wchar_t* batchTitles[] = { L"任务编号", L"失败原因", L"预处理 ms", L"搜索 ms", L"整体 ms" };
     const wchar_t* singleTitles[] = {
-        L"中心 x（px）", L"中心 y（px）", L"角度（°）", L"尺度（倍率）", L"分数（%）"
+        L"序号", L"中心 x（px）", L"中心 y（px）", L"角度（°）", L"尺度（倍率）", L"分数（%）"
     };
     const wchar_t** titles = batch ? batchTitles : singleTitles;
-    for (int column = 0; column < 5; ++column) {
+    const int count = batch ? 5 : 6;
+    for (int column = 0; column < count; ++column) {
         resultsList_.InsertColumn(column, titles[column], LVCFMT_LEFT, 100);
     }
     batchResults_ = batch;
@@ -1077,16 +1090,20 @@ void CLocatorMfcDlg::prepareResultList(bool batch)
 void CLocatorMfcDlg::resizeResultColumns()
 {
     CHeaderCtrl* header = resultsList_.GetHeaderCtrl();
-    if (header == nullptr || header->GetItemCount() != 5) {
+    if (header == nullptr) {
+        return;
+    }
+    const int count = header->GetItemCount();
+    if (count != 5 && count != 6) {
         return;
     }
     CRect client;
     resultsList_.GetClientRect(&client);
     const int width = client.Width();
     const int batchWidths[] = { 12, 36, 17, 17, 18 };
-    const int singleWidths[] = { 20, 20, 18, 18, 24 };
-    const int* percentages = batchResults_ ? batchWidths : singleWidths;
-    for (int column = 0; column < 5; ++column) {
+    const int singleWidths[] = { 8, 18, 18, 16, 16, 24 };
+    const int* percentages = count == 5 ? batchWidths : singleWidths;
+    for (int column = 0; column < count; ++column) {
         resultsList_.SetColumnWidth(column, width * percentages[column] / 100);
     }
 }
@@ -1605,7 +1622,7 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     CRect listClient;
     resultsList_.GetClientRect(&listClient);
     int columnWidth = 0;
-    for (int column = 0; column < 5; ++column) {
+    for (int column = 0; column < resultsList_.GetHeaderCtrl()->GetItemCount(); ++column) {
         columnWidth += resultsList_.GetColumnWidth(column);
     }
     require(columnWidth >= listClient.Width() * 9 / 10,
@@ -1705,17 +1722,48 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     waitSingle();
     require(resultsList_.GetItemCount() == static_cast<int>(expected.matches.size()) &&
             searchView_.hasResults(), "对话框单次结果数量或叠加数据与核心不一致");
-    if (resultsList_.GetItemText(0, 0) != expectedFields[0] ||
-        resultsList_.GetItemText(0, 1) != expectedFields[1] ||
-        resultsList_.GetItemText(0, 2) != expectedFields[2] ||
-        resultsList_.GetItemText(0, 3) != expectedFields[3] ||
-        resultsList_.GetItemText(0, 4) != expectedFields[4]) {
-        const CString actual = resultsList_.GetItemText(0, 0) + L"，" +
-            resultsList_.GetItemText(0, 1) + L"，" + resultsList_.GetItemText(0, 2) + L"，" +
-            resultsList_.GetItemText(0, 3) + L"，" + resultsList_.GetItemText(0, 4);
-        throw std::runtime_error("对话框单次结果实际为：" +
-                                 std::string(CT2A(actual.GetString(), CP_UTF8)));
+    for (int field = 0; field < 5; ++field) {
+        const CString actual = resultsList_.GetItemText(0, field + 1);
+        if (actual != expectedFields[field]) {
+            throw std::runtime_error("对话框单次结果字段 " + std::to_string(field) +
+                                     " 实际为：" + std::string(CT2A(actual.GetString(), CP_UTF8)));
+        }
     }
+
+    LocatorWorkflow::SingleResult multiple;
+    multiple.error = LocatorError::Ok;
+    multiple.matches = expected.matches;
+    multiple.matches.push_back(expected.matches[0]);
+    multiple.matches[1].x += 2.0;
+    multiple.matches[1].score -= 0.01;
+    showSingleResult(multiple);
+    require(resultsList_.GetHeaderCtrl()->GetItemCount() == 6 &&
+            resultsList_.GetItemText(0, 0) == L"1" && resultsList_.GetItemText(1, 0) == L"2",
+            "多目标结果缺少序号列");
+    resultsList_.SetItemState(1, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+    require(searchView_.selectedResult() == 1,
+            "列表第二行没有高亮对应的图像结果");
+    ShowWindow(SW_SHOWNOACTIVATE);
+    RedrawWindow(nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    const std::vector<CRect> labelRects = searchView_.resultLabelRects();
+    require(labelRects.size() == 2, "多目标标签数量不正确");
+    CRect imageClient;
+    searchView_.GetClientRect(&imageClient);
+    CRect labelOverlap;
+    require(labelRects[0].Width() > 0 && labelRects[1].Width() > 0 &&
+            labelRects[0].left >= imageClient.left && labelRects[0].right <= imageClient.right &&
+            labelRects[1].left >= imageClient.left && labelRects[1].right <= imageClient.right &&
+            labelRects[0].top >= imageClient.top && labelRects[0].bottom <= imageClient.bottom &&
+            labelRects[1].top >= imageClient.top && labelRects[1].bottom <= imageClient.bottom &&
+            !labelOverlap.IntersectRect(labelRects[0], labelRects[1]),
+            "多目标标签重叠或超出图像控件");
+    if (previewPath != nullptr && *previewPath != L'\0') {
+        const std::wstring path = std::wstring(previewPath) + L".multiple.png";
+        savePreview(path.c_str());
+    }
+    ShowWindow(SW_HIDE);
+    OnExecute();
+    waitSingle();
 
     SetDlgItemText(IDC_ANGLE_MIN, L"非法值");
     OnExecute();
@@ -1811,7 +1859,7 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
             "窗口缩放后匹配结果被清除");
     resultsList_.GetClientRect(&listClient);
     columnWidth = 0;
-    for (int column = 0; column < 5; ++column) {
+    for (int column = 0; column < resultsList_.GetHeaderCtrl()->GetItemCount(); ++column) {
         columnWidth += resultsList_.GetColumnWidth(column);
     }
     require(columnWidth >= listClient.Width() * 9 / 10,
