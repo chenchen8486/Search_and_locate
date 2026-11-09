@@ -528,6 +528,33 @@ HBRUSH CLocatorMfcDlg::OnCtlColor(CDC* dc, CWnd* wnd, UINT ctlColor)
 
 void CLocatorMfcDlg::OnDrawItem(int controlId, LPDRAWITEMSTRUCT drawItem)
 {
+    if (controlId == IDC_MODE_TABS && drawItem->CtlType == ODT_TAB) {
+        const bool selected = static_cast<int>(drawItem->itemID) == modeTabs_.GetCurSel();
+        CDC dc;
+        dc.Attach(drawItem->hDC);
+        dc.FillSolidRect(&drawItem->rcItem,
+                         selected ? RGB(22, 114, 135) : RGB(233, 239, 243));
+        wchar_t text[64] = {};
+        TCITEM item = {};
+        item.mask = TCIF_TEXT;
+        item.pszText = text;
+        item.cchTextMax = 64;
+        if (modeTabs_.GetItem(static_cast<int>(drawItem->itemID), &item)) {
+            dc.SetBkMode(TRANSPARENT);
+            dc.SetTextColor(selected ? RGB(255, 255, 255) : RGB(65, 80, 96));
+            CFont* oldFont = dc.SelectObject(selected ? &sectionFont_ : GetFont());
+            CRect textRect = drawItem->rcItem;
+            dc.DrawText(text, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            dc.SelectObject(oldFont);
+        }
+        if ((drawItem->itemState & ODS_FOCUS) != 0) {
+            CRect focus = drawItem->rcItem;
+            focus.DeflateRect(4, 4);
+            dc.DrawFocusRect(&focus);
+        }
+        dc.Detach();
+        return;
+    }
     if (drawItem->CtlType != ODT_BUTTON) {
         CDialogEx::OnDrawItem(controlId, drawItem);
         return;
@@ -1251,6 +1278,8 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     tabs->SendMessage(TCM_GETITEMRECT, 1, reinterpret_cast<LPARAM>(&lastTab));
     require(tabs->SendMessage(TCM_GETROWCOUNT) == 1 && lastTab.right <= tabClient.right,
             "两个页签没有完整利用检查器宽度，出现了滚动箭头");
+    require((tabs->GetStyle() & TCS_OWNERDRAWFIXED) != 0,
+            "页签没有明确的选中项高亮绘制");
     require(controlRect(IDC_EXECUTION_HINT).top -
             controlRect(IDC_DIVIDER_RESULT_OPTIONS).bottom <= MulDiv(120, dpiY_, 96),
             "默认窗口的参数与执行按钮之间存在过大空白");
