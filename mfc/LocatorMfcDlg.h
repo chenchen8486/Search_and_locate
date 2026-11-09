@@ -57,7 +57,7 @@ private:
         bool valid = false;
     };
 
-    bool readConfig(LocatorConfig& config);
+    bool readConfig(LocatorConfig& config, CString* diagnosis = nullptr, int* invalidControl = nullptr);
     void updateExecutionHint();
     void updateRoiFields();
     void writeConfig(const LocatorConfig& config);

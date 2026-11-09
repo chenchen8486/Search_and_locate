@@ -853,41 +853,63 @@ void CLocatorMfcDlg::OnReset()
     SetDlgItemText(IDC_STATUS_TEXT, L"已复位到当前图片对加载完成时的状态，请重新执行搜索");
 }
 
-bool CLocatorMfcDlg::readConfig(LocatorConfig& config)
+bool CLocatorMfcDlg::readConfig(LocatorConfig& config, CString* diagnosis, int* invalidControl)
 {
-    config.backend = backendCombo_.GetCurSel() == 1 ? LocatorBackend::Gpu : LocatorBackend::Cpu;
-    const std::pair<int, double*> doubleFields[] = {
-        { IDC_ANGLE_MIN, &config.angleMinDeg },
-        { IDC_ANGLE_MAX, &config.angleMaxDeg },
-        { IDC_ANGLE_STEP, &config.angleStepDeg },
-        { IDC_SCALE_MIN, &config.scaleMin },
-        { IDC_SCALE_MAX, &config.scaleMax },
-        { IDC_SCALE_STEP, &config.scaleStep },
-        { IDC_MIN_SCORE, &config.minScore }
+    const auto fail = [diagnosis, invalidControl](int id, const wchar_t* message) {
+        if (diagnosis != nullptr) {
+            *diagnosis = message;
+        }
+        if (invalidControl != nullptr) {
+            *invalidControl = id;
+        }
+        return false;
+    };
+    const int backend = backendCombo_.GetCurSel();
+    if (backend < 0) {
+        return fail(IDC_BACKEND, L"计算后端必须选择 CPU 或 GPU");
+    }
+    config.backend = backend == 1 ? LocatorBackend::Gpu : LocatorBackend::Cpu;
+    const struct { int id; double* value; const wchar_t* label; } doubleFields[] = {
+        { IDC_ANGLE_MIN, &config.angleMinDeg, L"最小角度" },
+        { IDC_ANGLE_MAX, &config.angleMaxDeg, L"最大角度" },
+        { IDC_ANGLE_STEP, &config.angleStepDeg, L"角度步进" },
+        { IDC_SCALE_MIN, &config.scaleMin, L"最小尺度" },
+        { IDC_SCALE_MAX, &config.scaleMax, L"最大尺度" },
+        { IDC_SCALE_STEP, &config.scaleStep, L"尺度步进" },
+        { IDC_MIN_SCORE, &config.minScore, L"最低分数" }
     };
     for (const auto& field : doubleFields) {
-        if (!readDouble(this, field.first, *field.second)) {
-            return false;
+        if (!readDouble(this, field.id, *field.value)) {
+            return fail(field.id, CString(field.label) + L"必须是有效的有限数值");
         }
     }
-
-    const std::pair<int, int*> intFields[] = {
-        { IDC_PYRAMID, &config.pyramidLevels },
-        { IDC_MAX_RESULTS, &config.maxResults },
-        { IDC_X_VICINITY, &config.xVicinity },
-        { IDC_Y_VICINITY, &config.yVicinity }
+    const struct { int id; int* value; const wchar_t* label; } intFields[] = {
+        { IDC_PYRAMID, &config.pyramidLevels, L"金字塔层数" },
+        { IDC_MAX_RESULTS, &config.maxResults, L"Top-N" },
+        { IDC_X_VICINITY, &config.xVicinity, L"x 去重半径" },
+        { IDC_Y_VICINITY, &config.yVicinity, L"y 去重半径" }
     };
     for (const auto& field : intFields) {
-        if (!readInt(this, field.first, *field.second)) {
-            return false;
+        if (!readInt(this, field.id, *field.value)) {
+            return fail(field.id, CString(field.label) + L"必须是整数");
         }
     }
-    const int resolutions[] = { 1, 2, 4, 8 };
     const int selected = subpixelCombo_.GetCurSel();
     if (selected < 0) {
-        return false;
+        return fail(IDC_SUBPIXEL, L"亚像素必须选择 1、2、4 或 8 档");
     }
+    const int resolutions[] = { 1, 2, 4, 8 };
     config.subPixelResolution = resolutions[selected];
+    if (config.angleStepDeg <= 0.0) return fail(IDC_ANGLE_STEP, L"角度步进必须大于 0°");
+    if (config.angleMinDeg > config.angleMaxDeg) return fail(IDC_ANGLE_MIN, L"最小角度必须不大于最大角度");
+    if (config.scaleStep <= 0.0) return fail(IDC_SCALE_STEP, L"尺度步进必须大于 0");
+    if (config.scaleMin <= 0.0) return fail(IDC_SCALE_MIN, L"最小尺度必须大于 0");
+    if (config.scaleMax < config.scaleMin) return fail(IDC_SCALE_MAX, L"最大尺度必须不小于最小尺度");
+    if (config.pyramidLevels < 1) return fail(IDC_PYRAMID, L"金字塔层数必须至少为 1");
+    if (config.minScore < 0.0 || config.minScore > 100.0) return fail(IDC_MIN_SCORE, L"最低分数必须位于 0～100");
+    if (config.maxResults < 1) return fail(IDC_MAX_RESULTS, L"Top-N 必须至少为 1");
+    if (config.xVicinity < 0) return fail(IDC_X_VICINITY, L"x 去重半径必须大于或等于 0");
+    if (config.yVicinity < 0) return fail(IDC_Y_VICINITY, L"y 去重半径必须大于或等于 0");
     return true;
 }
 
@@ -926,8 +948,16 @@ void CLocatorMfcDlg::OnExecute()
         return;
     }
     LocatorConfig config;
-    if (!readConfig(config)) {
-        SetDlgItemText(IDC_STATUS_TEXT, L"参数格式无效，请检查所有数值输入");
+    CString diagnosis;
+    int invalidControl = 0;
+    if (!readConfig(config, &diagnosis, &invalidControl)) {
+        SetDlgItemText(IDC_STATUS_TEXT, diagnosis);
+        showInspectorPage(0);
+        CWnd* input = GetDlgItem(invalidControl);
+        if (input != nullptr) {
+            input->SetFocus();
+            input->SendMessage(EM_SETSEL, 0, -1);
+        }
         return;
     }
     config.useRoi = useRoi_;
@@ -1710,6 +1740,30 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     waitSingle();
     require(resultsList_.GetItemCount() == static_cast<int>(expected.matches.size()),
             "恢复有效配置后不能重新执行搜索");
+    const struct { int id; const wchar_t* value; const wchar_t* valid; const wchar_t* hint; } invalidCases[] = {
+        { IDC_ANGLE_STEP, L"0", L"1", L"角度步进" },
+        { IDC_ANGLE_MIN, L"3", L"-2", L"最小角度" },
+        { IDC_SCALE_STEP, L"0", L"0.05", L"尺度步进" },
+        { IDC_SCALE_MIN, L"0", L"0.9", L"最小尺度" },
+        { IDC_SCALE_MAX, L"0.8", L"1.05", L"最大尺度" },
+        { IDC_PYRAMID, L"0", L"2", L"金字塔" },
+        { IDC_MIN_SCORE, L"101", L"85", L"最低分数" },
+        { IDC_MAX_RESULTS, L"0", L"2", L"Top-N" },
+        { IDC_X_VICINITY, L"-1", L"2", L"x 去重" },
+        { IDC_Y_VICINITY, L"-1", L"3", L"y 去重" }
+    };
+    for (const auto& test : invalidCases) {
+        SetDlgItemText(test.id, test.value);
+        OnExecute();
+        CString diagnosis;
+        GetDlgItemText(IDC_STATUS_TEXT, diagnosis);
+        require(diagnosis.Find(test.hint) >= 0 && diagnosis.Find(L"必须") >= 0 &&
+                GetFocus() != nullptr && GetFocus()->GetDlgCtrlID() == test.id,
+                (std::string("参数错误未定位字段或说明有效范围，ID=") + std::to_string(test.id)).c_str());
+        SetDlgItemText(test.id, test.valid);
+    }
+    OnExecute();
+    waitSingle();
 
     CRect originalWindow;
     GetWindowRect(&originalWindow);
