@@ -960,7 +960,15 @@ void CLocatorMfcDlg::showSingleResult(const LocatorWorkflow::SingleResult& run)
 {
     if (run.error != LocatorError::Ok) {
         clearResultDisplay();
-        showError(run.error);
+        if (run.diagnostic.empty()) {
+            showError(run.error);
+        } else {
+            const CString message = L"单次搜索异常：" + CString(CA2W(run.diagnostic.c_str(), CP_UTF8));
+            SetDlgItemText(IDC_STATUS_TEXT, message);
+            if (IsWindowVisible()) {
+                AfxMessageBox(message);
+            }
+        }
         return;
     }
     const std::vector<LocatorResult>& results = run.matches;
@@ -1690,6 +1698,13 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     waitSingle();
     require(resultsList_.GetItemCount() == 0 && !searchView_.hasResults(),
             "核心执行失败后仍显示上一次成功结果");
+    const LocatorWorkflow::SingleResult fault = LocatorWorkflow::protectSingle(
+        []() -> LocatorWorkflow::SingleResult { throw std::runtime_error("界面异常诊断探针"); });
+    showSingleResult(fault);
+    CString faultStatus;
+    GetDlgItemText(IDC_STATUS_TEXT, faultStatus);
+    require(faultStatus.Find(L"界面异常诊断探针") >= 0 && resultsList_.GetItemCount() == 0,
+            "界面未显示单次异常诊断或未清除结果");
     roi_ = { 10, 10, 100, 100 };
     OnExecute();
     waitSingle();

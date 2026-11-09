@@ -4,6 +4,7 @@
 
 #include <opencv2/core.hpp>
 
+#include <stdexcept>
 #include <vector>
 
 void testMfcWorkflowSingleSearch()
@@ -30,5 +31,33 @@ void testMfcWorkflowBatchTiming()
     for (const BatchResult& result : results) {
         expect(result.error == LocatorError::Ok && result.matches.size() == 1,
                "MFC 工作流批量任务 " + std::to_string(result.id) + " 失败");
+    }
+}
+
+void testMfcWorkflowSingleExceptions()
+{
+    for (int kind = 0; kind < 3; ++kind) {
+        const LocatorWorkflow::SingleResult result = LocatorWorkflow::protectSingle([kind]() -> LocatorWorkflow::SingleResult {
+            if (kind == 0) {
+                throw cv::Exception(1, "模拟 OpenCV 异常", "test", __FILE__, __LINE__);
+            }
+            if (kind == 1) {
+                throw std::runtime_error("模拟标准异常");
+            }
+            throw 7;
+        });
+        expect(result.error == LocatorError::InternalError && result.matches.empty(),
+               "单次异常必须转换为 InternalError 且不得保留结果");
+        expect(!result.diagnostic.empty(), "单次异常缺少诊断文本");
+        if (kind == 0) {
+            expect(result.diagnostic.find("OpenCV") != std::string::npos,
+                   "OpenCV 异常诊断未标出来源");
+        } else if (kind == 1) {
+            expect(result.diagnostic.find("模拟标准异常") != std::string::npos,
+                   "标准异常诊断未保留原始信息");
+        } else {
+            expect(result.diagnostic.find("未知") != std::string::npos,
+                   "未知异常诊断不明确");
+        }
     }
 }

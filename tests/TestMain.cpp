@@ -18,6 +18,7 @@ void testNccConstantInput();
 void testNccConstantSearchWindow();
 void testGpuConstantSearchWindow();
 void testMfcWorkflowSingleSearch();
+void testMfcWorkflowSingleExceptions();
 void testMfcWorkflowBatchTiming();
 void testRoiRestrictsSearch();
 void testRoiInvalidRejected();
@@ -192,6 +193,7 @@ const TestCase tests[] = {
     { "Gpu.BatchResponseEquivalence", testGpuBatchResponseEquivalence },
 #endif
     { "MfcWorkflow.SingleSearch", testMfcWorkflowSingleSearch },
+    { "MfcWorkflow.SingleExceptions", testMfcWorkflowSingleExceptions },
     { "MfcWorkflow.BatchTiming", testMfcWorkflowBatchTiming }
 };
 

@@ -4,6 +4,8 @@
 
 #include <opencv2/core.hpp>
 
+#include <functional>
+#include <string>
 #include <vector>
 
 namespace LocatorWorkflow {
@@ -14,8 +16,10 @@ struct SingleResult {
     double preprocessMs = 0.0;
     double searchMs = 0.0;
     double totalMs = 0.0;
+    std::string diagnostic;
 };
 
+SingleResult protectSingle(const std::function<SingleResult()>& action);
 SingleResult runSingle(const cv::Mat& model, const cv::Mat& search,
                        const LocatorConfig& config);
 double runBatch(const std::vector<BatchTask>& tasks, int threads,
