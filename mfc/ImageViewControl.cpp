@@ -45,6 +45,13 @@ void CImageViewControl::setSelectionEnabled(bool enabled)
     }
 }
 
+void CImageViewControl::setSelection(const cv::Rect& selection)
+{
+    selection_ = selection;
+    hasSelection_ = !selection.empty();
+    Invalidate();
+}
+
 void CImageViewControl::clearSelection()
 {
     hasSelection_ = false;

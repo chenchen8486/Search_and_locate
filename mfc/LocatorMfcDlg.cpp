@@ -93,6 +93,7 @@ BEGIN_MESSAGE_MAP(CLocatorMfcDlg, CDialogEx)
     ON_BN_CLICKED(IDC_LOAD_TEMPLATE, &CLocatorMfcDlg::OnLoadTemplate)
     ON_BN_CLICKED(IDC_SELECT_ROI, &CLocatorMfcDlg::OnSelectRoi)
     ON_BN_CLICKED(IDC_CLEAR_ROI, &CLocatorMfcDlg::OnClearRoi)
+    ON_BN_CLICKED(IDC_APPLY_ROI, &CLocatorMfcDlg::OnApplyRoi)
     ON_BN_CLICKED(IDC_RESET, &CLocatorMfcDlg::OnReset)
     ON_BN_CLICKED(IDC_EXECUTE, &CLocatorMfcDlg::OnExecute)
     ON_BN_CLICKED(IDC_BATCH_BROWSE, &CLocatorMfcDlg::OnBatchBrowse)
@@ -163,7 +164,7 @@ BOOL CLocatorMfcDlg::OnInitDialog()
         IDC_ANGLE_MIN, IDC_ANGLE_MAX, IDC_ANGLE_STEP, IDC_SCALE_MIN, IDC_SCALE_MAX,
         IDC_SCALE_STEP, IDC_PYRAMID, IDC_MIN_SCORE, IDC_MAX_RESULTS,
         IDC_X_VICINITY, IDC_Y_VICINITY, IDC_BATCH_COUNT, IDC_BATCH_THREADS,
-        IDC_BACKEND, IDC_SUBPIXEL
+        IDC_ROI_X, IDC_ROI_Y, IDC_ROI_WIDTH, IDC_ROI_HEIGHT, IDC_BACKEND, IDC_SUBPIXEL
     };
     for (int id : numericIds) {
         GetDlgItem(id)->SetFont(&numericFont_);
@@ -353,8 +354,20 @@ void CLocatorMfcDlg::applyLayout()
     place(IDC_RESULTS_TITLE, box(results.left + sx(12), results.top + sy(10), sx(90), sy(20)));
     place(IDC_RESULT_HINT, box(results.left + sx(112), results.top + sy(12),
         results.Width() - sx(124), sy(18)));
-    place(IDC_RESULT_LIST, box(results.left + sx(12), results.top + sy(38),
-        results.Width() - sx(24), results.Height() - sy(50)));
+    const int roiLabels[] = { IDC_ROI_X_LABEL, IDC_ROI_Y_LABEL, IDC_ROI_WIDTH_LABEL, IDC_ROI_HEIGHT_LABEL };
+    const int roiEdits[] = { IDC_ROI_X, IDC_ROI_Y, IDC_ROI_WIDTH, IDC_ROI_HEIGHT };
+    const int roiLeft = results.left + sx(12);
+    const int roiApplyWidth = sx(100);
+    const int roiFieldWidth = (results.Width() - sx(24) - roiApplyWidth - sx(32)) / 4;
+    for (int index = 0; index < 4; ++index) {
+        const int x = roiLeft + index * (roiFieldWidth + sx(8));
+        place(roiLabels[index], box(x, results.top + sy(34), roiFieldWidth, sy(16)));
+        place(roiEdits[index], box(x, results.top + sy(52), roiFieldWidth, sy(28)));
+    }
+    place(IDC_APPLY_ROI, box(results.right - sx(12) - roiApplyWidth,
+        results.top + sy(52), roiApplyWidth, sy(28)));
+    place(IDC_RESULT_LIST, box(results.left + sx(12), results.top + sy(88),
+        results.Width() - sx(24), results.Height() - sy(100)));
 
     modeTabs_.SetItemSize(CSize((rightWidth - sx(8)) / 2, sy(36)));
     place(IDC_MODE_TABS, box(right, top, rightWidth, sy(40)));
@@ -683,6 +696,35 @@ LRESULT CLocatorMfcDlg::OnImageSelectionChanged(WPARAM wParam, LPARAM lParam)
     return 0;
 }
 
+void CLocatorMfcDlg::OnApplyRoi()
+{
+    if (searchImage_.empty()) {
+        SetDlgItemText(IDC_STATUS_TEXT, L"请先加载搜索图，再设置 ROI");
+        return;
+    }
+    const int ids[] = { IDC_ROI_X, IDC_ROI_Y, IDC_ROI_WIDTH, IDC_ROI_HEIGHT };
+    int values[4] = {};
+    for (int index = 0; index < 4; ++index) {
+        if (!readInt(this, ids[index], values[index])) {
+            SetDlgItemText(IDC_STATUS_TEXT, L"ROI 的 x、y、宽和高必须是整数");
+            return;
+        }
+    }
+    const long long right = static_cast<long long>(values[0]) + values[2];
+    const long long bottom = static_cast<long long>(values[1]) + values[3];
+    if (values[0] < 0 || values[1] < 0 || values[2] <= 0 || values[3] <= 0 ||
+        right > searchImage_.cols || bottom > searchImage_.rows) {
+        SetDlgItemText(IDC_STATUS_TEXT, L"ROI 必须在搜索图内，宽和高至少为 1 像素");
+        return;
+    }
+    roi_ = { values[0], values[1], values[2], values[3] };
+    useRoi_ = true;
+    searchView_.setSelection(cv::Rect(roi_.x, roi_.y, roi_.width, roi_.height));
+    searchView_.setSelectionEnabled(false);
+    clearResultDisplay();
+    SetDlgItemText(IDC_STATUS_TEXT, L"已应用数值 ROI，旧结果已清除");
+}
+
 void CLocatorMfcDlg::OnParameterChanged(UINT id)
 {
     (void)id;
@@ -722,6 +764,19 @@ void CLocatorMfcDlg::updateExecutionHint()
         range = L"搜索范围：完整图像";
     }
     SetDlgItemText(IDC_EXECUTION_HINT, angle + L"，" + scale + L"\n" + range);
+}
+
+void CLocatorMfcDlg::updateRoiFields()
+{
+    const int ids[] = { IDC_ROI_X, IDC_ROI_Y, IDC_ROI_WIDTH, IDC_ROI_HEIGHT };
+    const int values[] = { roi_.x, roi_.y, roi_.width, roi_.height };
+    for (int index = 0; index < 4; ++index) {
+        if (useRoi_) {
+            SetDlgItemInt(ids[index], values[index], FALSE);
+        } else {
+            SetDlgItemText(ids[index], L"");
+        }
+    }
 }
 
 void CLocatorMfcDlg::writeConfig(const LocatorConfig& config)
@@ -1032,6 +1087,7 @@ void CLocatorMfcDlg::clearResultDisplay()
 {
     resultsList_.DeleteAllItems();
     searchView_.setResults({}, modelImage_.cols, modelImage_.rows);
+    updateRoiFields();
     updateExecutionHint();
 }
 
@@ -1464,6 +1520,26 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
             executionSummary.Find(L"0.9") >= 0 && executionSummary.Find(L"1.05") >= 0 &&
             executionSummary.Find(L"10") >= 0 && executionSummary.Find(L"100") >= 0,
             "执行摘要没有反映实际角度、尺度和 ROI");
+    SetDlgItemInt(IDC_ROI_X, 12);
+    SetDlgItemInt(IDC_ROI_Y, 14);
+    SetDlgItemInt(IDC_ROI_WIDTH, 40);
+    SetDlgItemInt(IDC_ROI_HEIGHT, 30);
+    SendMessage(WM_COMMAND, MAKEWPARAM(IDC_APPLY_ROI, BN_CLICKED),
+                reinterpret_cast<LPARAM>(GetDlgItem(IDC_APPLY_ROI)->GetSafeHwnd()));
+    const cv::Rect numericRoi = searchView_.selectedRect();
+    require(useRoi_ && roi_.x == 12 && roi_.y == 14 && roi_.width == 40 && roi_.height == 30 &&
+            numericRoi == cv::Rect(12, 14, 40, 30),
+            "ROI 数值、红框和核心配置没有同步");
+    OnClearRoi();
+    GetDlgItemText(IDC_ROI_X, executionSummary);
+    require(!useRoi_ && executionSummary.IsEmpty() && searchView_.selectedRect().empty(),
+            "清除 ROI 后数值或红框未同步清空");
+    SetDlgItemInt(IDC_ROI_X, 10);
+    SetDlgItemInt(IDC_ROI_Y, 10);
+    SetDlgItemInt(IDC_ROI_WIDTH, 100);
+    SetDlgItemInt(IDC_ROI_HEIGHT, 100);
+    SendMessage(WM_COMMAND, MAKEWPARAM(IDC_APPLY_ROI, BN_CLICKED),
+                reinterpret_cast<LPARAM>(GetDlgItem(IDC_APPLY_ROI)->GetSafeHwnd()));
 
     LocatorConfig config;
     require(readConfig(config), "对话框参数格式读取失败");

@@ -26,6 +26,7 @@ protected:
     afx_msg void OnLoadTemplate();
     afx_msg void OnSelectRoi();
     afx_msg void OnClearRoi();
+    afx_msg void OnApplyRoi();
     afx_msg void OnReset();
     afx_msg void OnParameterChanged(UINT id);
     afx_msg void OnChoiceChanged();
@@ -54,6 +55,7 @@ private:
 
     bool readConfig(LocatorConfig& config);
     void updateExecutionHint();
+    void updateRoiFields();
     void writeConfig(const LocatorConfig& config);
     void captureBaseline();
     void prepareResultList(bool batch);

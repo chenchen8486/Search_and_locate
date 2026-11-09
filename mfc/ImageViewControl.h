@@ -14,6 +14,7 @@ public:
     void setImage(const cv::Mat& image);
     void setResults(const std::vector<LocatorResult>& results, int modelWidth, int modelHeight);
     void setSelectionEnabled(bool enabled);
+    void setSelection(const cv::Rect& selection);
     void clearSelection();
     cv::Rect selectedRect() const;
     bool hasResults() const { return !results_.empty(); }
