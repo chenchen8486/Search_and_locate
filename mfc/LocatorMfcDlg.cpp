@@ -76,6 +76,7 @@ BEGIN_MESSAGE_MAP(CLocatorMfcDlg, CDialogEx)
     ON_BN_CLICKED(IDC_LOAD_TEMPLATE, &CLocatorMfcDlg::OnLoadTemplate)
     ON_BN_CLICKED(IDC_SELECT_ROI, &CLocatorMfcDlg::OnSelectRoi)
     ON_BN_CLICKED(IDC_CLEAR_ROI, &CLocatorMfcDlg::OnClearRoi)
+    ON_BN_CLICKED(IDC_RESET, &CLocatorMfcDlg::OnReset)
     ON_BN_CLICKED(IDC_EXECUTE, &CLocatorMfcDlg::OnExecute)
     ON_BN_CLICKED(IDC_BATCH_BROWSE, &CLocatorMfcDlg::OnBatchBrowse)
     ON_BN_CLICKED(IDC_BATCH_RUN, &CLocatorMfcDlg::OnBatchRun)
@@ -299,11 +300,12 @@ void CLocatorMfcDlg::applyLayout()
     const int toolbarGap = sx(8);
     const int toolRows = innerWidth >= sx(760) ? 1 : 2;
     const int toolHeight = sy(32);
-    const int toolIds[] = { IDC_LOAD_SEARCH, IDC_LOAD_TEMPLATE, IDC_SELECT_ROI, IDC_CLEAR_ROI };
-    for (int index = 0; index < 4; ++index) {
-        const int row = toolRows == 2 ? index / 2 : 0;
-        const int column = toolRows == 2 ? index % 2 : index;
-        const int count = toolRows == 2 ? 2 : 4;
+    const int toolIds[] = { IDC_LOAD_SEARCH, IDC_LOAD_TEMPLATE, IDC_SELECT_ROI,
+                            IDC_CLEAR_ROI, IDC_RESET };
+    for (int index = 0; index < 5; ++index) {
+        const int row = toolRows == 2 ? index / 3 : 0;
+        const int column = toolRows == 2 ? index % 3 : index;
+        const int count = row == 1 ? 2 : (toolRows == 2 ? 3 : 5);
         const int buttonWidth = (innerWidth - toolbarGap * (count - 1)) / count;
         place(toolIds[index], box(innerLeft + column * (buttonWidth + toolbarGap),
             toolbarY + row * (toolHeight + toolbarGap), buttonWidth, toolHeight));
@@ -568,6 +570,7 @@ void CLocatorMfcDlg::OnLoadSearch()
     SetDlgItemText(IDC_IMAGE_META_SEARCH, dimensions);
     SetDlgItemText(IDC_SEARCH_PATH, path);
     SetDlgItemText(IDC_STATUS_TEXT, L"搜索图已加载");
+    captureBaseline();
 }
 
 void CLocatorMfcDlg::OnLoadTemplate()
@@ -592,6 +595,7 @@ void CLocatorMfcDlg::OnLoadTemplate()
     SetDlgItemText(IDC_IMAGE_META_TEMPLATE, dimensions);
     SetDlgItemText(IDC_TEMPLATE_PATH, path);
     SetDlgItemText(IDC_STATUS_TEXT, L"模板已加载");
+    captureBaseline();
 }
 
 void CLocatorMfcDlg::OnSelectRoi()
@@ -628,6 +632,72 @@ LRESULT CLocatorMfcDlg::OnImageSelectionChanged(WPARAM wParam, LPARAM lParam)
     SetDlgItemText(IDC_STATUS_TEXT, CString(L"ROI 已设置"));
     searchView_.setSelectionEnabled(false);
     return 0;
+}
+
+void CLocatorMfcDlg::writeConfig(const LocatorConfig& config)
+{
+    const auto number = [this](int id, double value) {
+        CString text;
+        text.Format(L"%.12g", value);
+        SetDlgItemText(id, text);
+    };
+    number(IDC_ANGLE_MIN, config.angleMinDeg);
+    number(IDC_ANGLE_MAX, config.angleMaxDeg);
+    number(IDC_ANGLE_STEP, config.angleStepDeg);
+    number(IDC_SCALE_MIN, config.scaleMin);
+    number(IDC_SCALE_MAX, config.scaleMax);
+    number(IDC_SCALE_STEP, config.scaleStep);
+    SetDlgItemInt(IDC_PYRAMID, config.pyramidLevels);
+    number(IDC_MIN_SCORE, config.minScore);
+    SetDlgItemInt(IDC_MAX_RESULTS, config.maxResults);
+    SetDlgItemInt(IDC_X_VICINITY, config.xVicinity);
+    SetDlgItemInt(IDC_Y_VICINITY, config.yVicinity);
+    backendCombo_.SetCurSel(config.backend == LocatorBackend::Gpu ? 1 : 0);
+    const int resolutions[] = { 1, 2, 4, 8 };
+    for (int index = 0; index < 4; ++index) {
+        if (resolutions[index] == config.subPixelResolution) {
+            subpixelCombo_.SetCurSel(index);
+            break;
+        }
+    }
+}
+
+void CLocatorMfcDlg::captureBaseline()
+{
+    baseline_.valid = !searchImage_.empty() && !modelImage_.empty() &&
+                      readConfig(baseline_.config);
+    if (baseline_.valid) {
+        baseline_.search = searchImage_.clone();
+        baseline_.model = modelImage_.clone();
+        GetDlgItemText(IDC_SEARCH_PATH, baseline_.searchPath);
+        GetDlgItemText(IDC_TEMPLATE_PATH, baseline_.templatePath);
+    }
+    GetDlgItem(IDC_RESET)->EnableWindow(baseline_.valid);
+}
+
+void CLocatorMfcDlg::OnReset()
+{
+    if (!baseline_.valid) {
+        return;
+    }
+    searchImage_ = baseline_.search.clone();
+    modelImage_ = baseline_.model.clone();
+    searchView_.setImage(searchImage_);
+    templateView_.setImage(modelImage_);
+    writeConfig(baseline_.config);
+    useRoi_ = false;
+    roi_ = { 0, 0, 0, 0 };
+    searchView_.clearSelection();
+    searchView_.setSelectionEnabled(false);
+    clearResultDisplay();
+    SetDlgItemText(IDC_SEARCH_PATH, baseline_.searchPath);
+    SetDlgItemText(IDC_TEMPLATE_PATH, baseline_.templatePath);
+    CString dimensions;
+    dimensions.Format(L"%d × %d", searchImage_.cols, searchImage_.rows);
+    SetDlgItemText(IDC_IMAGE_META_SEARCH, dimensions);
+    dimensions.Format(L"%d × %d", modelImage_.cols, modelImage_.rows);
+    SetDlgItemText(IDC_IMAGE_META_TEMPLATE, dimensions);
+    SetDlgItemText(IDC_STATUS_TEXT, L"已复位到当前图片对加载完成时的状态，请重新执行搜索");
 }
 
 bool CLocatorMfcDlg::readConfig(LocatorConfig& config)
@@ -945,6 +1015,8 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     ShowWindow(SW_HIDE);
     require(GetDlgItem(IDC_SELECT_TEMPLATE) == nullptr,
             "模板只能通过单独加载图片指定，不应保留框选模板控件");
+    require(GetDlgItem(IDC_RESET) != nullptr && !GetDlgItem(IDC_RESET)->IsWindowEnabled(),
+            "没有完整图片基准时复位按钮应禁用");
     searchImage_ = search;
     modelImage_ = model;
     searchView_.setImage(searchImage_);
@@ -959,6 +1031,8 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     SetDlgItemText(IDC_TEMPLATE_PATH, imageDescription);
     imageDescription.Format(L"%d × %d", model.cols, model.rows);
     SetDlgItemText(IDC_IMAGE_META_TEMPLATE, imageDescription);
+    captureBaseline();
+    require(GetDlgItem(IDC_RESET)->IsWindowEnabled(), "完整图片对加载后复位按钮未启用");
 
     const auto controlRect = [this](int id) {
         CRect rect;
@@ -1450,4 +1524,47 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
         savePreview(batchPreview.c_str());
         showInspectorPage(0);
     }
+
+    const CString batchCountBeforeReset = batchStats_.GetItemText(0, 1);
+    CString batchPathBeforeReset;
+    GetDlgItemText(IDC_BATCH_PATH, batchPathBeforeReset);
+    SetDlgItemText(IDC_BATCH_COUNT, L"37");
+    SetDlgItemText(IDC_BATCH_THREADS, L"3");
+    SendMessage(WM_COMMAND, MAKEWPARAM(IDC_RESET, BN_CLICKED),
+                reinterpret_cast<LPARAM>(GetDlgItem(IDC_RESET)->GetSafeHwnd()));
+    LocatorConfig restored;
+    LocatorConfig defaults;
+    require(readConfig(restored) && restored.backend == defaults.backend &&
+            restored.angleMinDeg == defaults.angleMinDeg &&
+            restored.angleMaxDeg == defaults.angleMaxDeg &&
+            restored.scaleMin == defaults.scaleMin && restored.scaleMax == defaults.scaleMax &&
+            restored.subPixelResolution == defaults.subPixelResolution,
+            "复位没有恢复初始参数和后端");
+    require(!useRoi_ && searchView_.selectedRect().empty() &&
+            resultsList_.GetItemCount() == 0 && !searchView_.hasResults(),
+            "复位没有清空 ROI、结果及叠加内容");
+    require(cv::countNonZero(searchImage_ != search) == 0 &&
+            cv::countNonZero(modelImage_ != model) == 0,
+            "复位没有恢复当前图片基准");
+    CString status;
+    GetDlgItemText(IDC_STATUS_TEXT, status);
+    require(status.Find(L"复位") >= 0 && resultsList_.GetItemCount() == 0,
+            "复位后不应自动搜索且应有明确状态");
+    GetDlgItemText(IDC_BATCH_COUNT, status);
+    require(status == L"37", "复位修改了批量任务数");
+    GetDlgItemText(IDC_BATCH_THREADS, status);
+    require(status == L"3", "复位修改了批量线程数");
+    GetDlgItemText(IDC_BATCH_PATH, status);
+    require(status == batchPathBeforeReset && batchStats_.GetItemText(0, 1) == batchCountBeforeReset,
+            "复位修改了批量目录或统计");
+
+    modelImage_ = model.clone();
+    modelImage_(cv::Rect(0, 0, 1, 1)).setTo(255 - model.at<uchar>(0, 0));
+    templateView_.setImage(modelImage_);
+    captureBaseline();
+    modelImage_ = model.clone();
+    OnReset();
+    require(modelImage_.size() == model.size() &&
+            modelImage_.at<uchar>(0, 0) != model.at<uchar>(0, 0),
+            "重新加载图片对后复位仍使用旧模板基准");
 }

@@ -26,6 +26,7 @@ protected:
     afx_msg void OnLoadTemplate();
     afx_msg void OnSelectRoi();
     afx_msg void OnClearRoi();
+    afx_msg void OnReset();
     afx_msg void OnExecute();
     afx_msg void OnBatchBrowse();
     afx_msg void OnBatchRun();
@@ -40,7 +41,18 @@ protected:
     afx_msg void OnGetMinMaxInfo(MINMAXINFO* info);
 
 private:
+    struct SingleBaseline {
+        cv::Mat search;
+        cv::Mat model;
+        CString searchPath;
+        CString templatePath;
+        LocatorConfig config;
+        bool valid = false;
+    };
+
     bool readConfig(LocatorConfig& config);
+    void writeConfig(const LocatorConfig& config);
+    void captureBaseline();
     void prepareResultList(bool batch);
     void resizeResultColumns();
     void initializeLayout();
@@ -56,6 +68,7 @@ private:
 
     cv::Mat searchImage_;
     cv::Mat modelImage_;
+    SingleBaseline baseline_;
     CImageViewControl searchView_;
     CImageViewControl templateView_;
     CListCtrl resultsList_;
