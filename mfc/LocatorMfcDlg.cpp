@@ -1052,6 +1052,42 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     captureBaseline();
     require(GetDlgItem(IDC_RESET)->IsWindowEnabled(), "完整图片对加载后复位按钮未启用");
 
+    ShowWindow(SW_SHOWNOACTIVATE);
+    RedrawWindow(nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+    CRect roiClient;
+    searchView_.GetClientRect(&roiClient);
+    const int roiWidth = std::min(roiClient.Width(), roiClient.Height());
+    const CRect roiBitmap(roiClient.left + (roiClient.Width() - roiWidth) / 2,
+                          roiClient.top + (roiClient.Height() - roiWidth) / 2,
+                          roiClient.left + (roiClient.Width() + roiWidth) / 2,
+                          roiClient.top + (roiClient.Height() + roiWidth) / 2);
+    const CPoint roiStart = roiBitmap.CenterPoint();
+    const CPoint outside[] = {
+        CPoint(roiBitmap.left - 10, roiStart.y), CPoint(roiStart.x, roiBitmap.top - 10),
+        CPoint(roiBitmap.right + 10, roiStart.y), CPoint(roiStart.x, roiBitmap.bottom + 10)
+    };
+    searchView_.setSelectionEnabled(true);
+    for (const CPoint& end : outside) {
+        searchView_.SendMessage(WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(roiStart.x, roiStart.y));
+        searchView_.SendMessage(WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(end.x, end.y));
+        searchView_.SendMessage(WM_LBUTTONUP, 0, MAKELPARAM(end.x, end.y));
+        const cv::Rect selected = searchView_.selectedRect();
+        const std::string roiDebug = "显示=" + std::to_string(roiBitmap.left) + "," +
+            std::to_string(roiBitmap.top) + "," + std::to_string(roiBitmap.right) + "," +
+            std::to_string(roiBitmap.bottom) + "，起点=" + std::to_string(roiStart.x) + "," +
+            std::to_string(roiStart.y) + "，终点=" + std::to_string(end.x) + "," +
+            std::to_string(end.y) + "，选区=" + std::to_string(selected.x) + "," +
+            std::to_string(selected.y) + "," + std::to_string(selected.width) + "," +
+            std::to_string(selected.height);
+        require(selected.x >= 0 && selected.y >= 0 && selected.width > 0 && selected.height > 0 &&
+                selected.x + selected.width <= search.cols &&
+                selected.y + selected.height <= search.rows,
+                (std::string("ROI 在图像边界外释放后没有保留有效选区，") + roiDebug).c_str());
+    }
+    searchView_.clearSelection();
+    searchView_.setSelectionEnabled(false);
+    ShowWindow(SW_HIDE);
+
     const auto controlRect = [this](int id) {
         CRect rect;
         GetDlgItem(id)->GetWindowRect(&rect);

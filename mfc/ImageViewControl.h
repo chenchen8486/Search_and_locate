@@ -29,6 +29,7 @@ protected:
 private:
     bool pointToImage(CPoint point, int& x, int& y) const;
     CPoint imageToScreen(double x, double y) const;
+    CPoint clampToBitmap(CPoint point) const;
     void updateSelection();
 
     cv::Mat image_;

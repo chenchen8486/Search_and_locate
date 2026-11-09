@@ -92,6 +92,13 @@ CPoint CImageViewControl::imageToScreen(double x, double y) const
                   bitmapRect_.top + static_cast<LONG>(std::lround(y * scaleY)));
 }
 
+CPoint CImageViewControl::clampToBitmap(CPoint point) const
+{
+    point.x = std::max(bitmapRect_.left, std::min(point.x, bitmapRect_.right - 1));
+    point.y = std::max(bitmapRect_.top, std::min(point.y, bitmapRect_.bottom - 1));
+    return point;
+}
+
 void CImageViewControl::updateSelection()
 {
     int x0 = 0;
@@ -127,9 +134,7 @@ void CImageViewControl::OnLButtonDown(UINT flags, CPoint point)
 void CImageViewControl::OnMouseMove(UINT flags, CPoint point)
 {
     if (dragging_) {
-        point.x = std::max(bitmapRect_.left, std::min(point.x, bitmapRect_.right - 1));
-        point.y = std::max(bitmapRect_.top, std::min(point.y, bitmapRect_.bottom - 1));
-        dragCurrent_ = point;
+        dragCurrent_ = clampToBitmap(point);
         updateSelection();
         Invalidate();
     }
@@ -139,7 +144,7 @@ void CImageViewControl::OnMouseMove(UINT flags, CPoint point)
 void CImageViewControl::OnLButtonUp(UINT flags, CPoint point)
 {
     if (dragging_) {
-        dragCurrent_ = point;
+        dragCurrent_ = clampToBitmap(point);
         dragging_ = false;
         ReleaseCapture();
         updateSelection();
