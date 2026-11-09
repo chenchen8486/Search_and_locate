@@ -110,6 +110,7 @@ BEGIN_MESSAGE_MAP(CLocatorMfcDlg, CDialogEx)
     ON_NOTIFY(TCN_SELCHANGE, IDC_MODE_TABS, &CLocatorMfcDlg::OnModeTabsChanged)
     ON_NOTIFY(LVN_ITEMCHANGED, IDC_RESULT_LIST, &CLocatorMfcDlg::OnResultItemChanged)
     ON_MESSAGE(WM_IMAGE_SELECTION_CHANGED, &CLocatorMfcDlg::OnImageSelectionChanged)
+    ON_MESSAGE(WM_IMAGE_CURSOR_POSITION, &CLocatorMfcDlg::OnImageCursorPosition)
     ON_MESSAGE(WM_LOCATOR_SELF_TEST, &CLocatorMfcDlg::OnSelfTest)
     ON_MESSAGE(WM_LOCATOR_SINGLE_COMPLETE, &CLocatorMfcDlg::OnSingleComplete)
     ON_WM_DESTROY()
@@ -702,6 +703,26 @@ LRESULT CLocatorMfcDlg::OnImageSelectionChanged(WPARAM wParam, LPARAM lParam)
     clearResultDisplay();
     SetDlgItemText(IDC_STATUS_TEXT, CString(L"ROI 已设置"));
     searchView_.setSelectionEnabled(false);
+    return 0;
+}
+
+LRESULT CLocatorMfcDlg::OnImageCursorPosition(WPARAM wParam, LPARAM lParam)
+{
+    (void)wParam;
+    (void)lParam;
+    if (searchImage_.empty()) {
+        return 0;
+    }
+    const CPoint position = searchView_.cursorImagePosition();
+    CString text;
+    if (position.x >= 0) {
+        text.Format(L"%d × %d | x=%d y=%d | %d%%", searchImage_.cols, searchImage_.rows,
+                    position.x, position.y, static_cast<int>(std::lround(searchView_.zoom() * 100)));
+    } else {
+        text.Format(L"%d × %d | 缩放 %d%%", searchImage_.cols, searchImage_.rows,
+                    static_cast<int>(std::lround(searchView_.zoom() * 100)));
+    }
+    SetDlgItemText(IDC_IMAGE_META_SEARCH, text);
     return 0;
 }
 
@@ -1343,6 +1364,48 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
                 selected.y + selected.height <= search.rows,
                 (std::string("ROI 在图像边界外释放后没有保留有效选区，") + roiDebug).c_str());
     }
+    searchView_.clearSelection();
+    searchView_.setSelectionEnabled(false);
+    searchView_.resetView();
+    CPoint wheelPoint = searchView_.imageToClient(58.0, 58.0);
+    searchView_.ClientToScreen(&wheelPoint);
+    searchView_.SendMessage(WM_MOUSEWHEEL, MAKEWPARAM(0, 120),
+                            MAKELPARAM(wheelPoint.x, wheelPoint.y));
+    require(searchView_.zoom() > 1.0, "滚轮没有放大搜索图");
+    const auto selectKnownRoi = [this, &require] {
+        searchView_.clearSelection();
+        searchView_.setSelectionEnabled(true);
+        const CPoint first = searchView_.imageToClient(16.0, 16.0);
+        const CPoint second = searchView_.imageToClient(47.0, 47.0);
+        searchView_.SendMessage(WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(first.x, first.y));
+        searchView_.SendMessage(WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(second.x, second.y));
+        searchView_.SendMessage(WM_LBUTTONUP, 0, MAKELPARAM(second.x, second.y));
+        const cv::Rect actual = searchView_.selectedRect();
+        const CRect display = searchView_.displayRect();
+        const std::string detail = "缩放=" + std::to_string(searchView_.zoom()) +
+            "，位图=" + std::to_string(display.left) + "," + std::to_string(display.top) + "," +
+            std::to_string(display.Width()) + "," + std::to_string(display.Height()) +
+            "，反算=" + std::to_string((second.x - display.left) * 118.0 / display.Width()) +
+            "，点=" + std::to_string(first.x) + "," + std::to_string(first.y) + " / " +
+            std::to_string(second.x) + "," + std::to_string(second.y) +
+            "，选区=" + std::to_string(actual.x) + "," + std::to_string(actual.y) + "," +
+            std::to_string(actual.width) + "," + std::to_string(actual.height);
+        require(actual == cv::Rect(16, 16, 32, 32),
+                (std::string("缩放或平移后的 ROI 原图坐标不一致，") + detail).c_str());
+    };
+    selectKnownRoi();
+    CPoint panStart = searchView_.imageToClient(58.0, 58.0);
+    searchView_.SendMessage(WM_MBUTTONDOWN, MK_MBUTTON, MAKELPARAM(panStart.x, panStart.y));
+    searchView_.SendMessage(WM_MOUSEMOVE, MK_MBUTTON,
+                            MAKELPARAM(panStart.x + 20, panStart.y + 10));
+    searchView_.SendMessage(WM_MBUTTONUP, 0, MAKELPARAM(panStart.x + 20, panStart.y + 10));
+    selectKnownRoi();
+    SendMessage(WM_IMAGE_CURSOR_POSITION, 0, 0);
+    CString cursorHint;
+    GetDlgItemText(IDC_IMAGE_META_SEARCH, cursorHint);
+    require(cursorHint.Find(L"x=") >= 0 && cursorHint.Find(L"%") >= 0,
+            "搜索图缺少原图坐标和缩放提示");
+    searchView_.resetView();
     searchView_.clearSelection();
     searchView_.setSelectionEnabled(false);
     ShowWindow(SW_HIDE);

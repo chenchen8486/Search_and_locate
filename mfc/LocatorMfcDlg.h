@@ -38,6 +38,7 @@ protected:
     afx_msg void OnModeTabsChanged(NMHDR* header, LRESULT* result);
     afx_msg void OnResultItemChanged(NMHDR* header, LRESULT* result);
     afx_msg LRESULT OnImageSelectionChanged(WPARAM wParam, LPARAM lParam);
+    afx_msg LRESULT OnImageCursorPosition(WPARAM wParam, LPARAM lParam);
     afx_msg LRESULT OnSingleComplete(WPARAM wParam, LPARAM lParam);
     afx_msg LRESULT OnSelfTest(WPARAM wParam, LPARAM lParam);
     afx_msg void OnPaint();

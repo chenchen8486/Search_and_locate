@@ -14,6 +14,10 @@ BEGIN_MESSAGE_MAP(CImageViewControl, CWnd)
     ON_WM_LBUTTONDOWN()
     ON_WM_MOUSEMOVE()
     ON_WM_LBUTTONUP()
+    ON_WM_MOUSEWHEEL()
+    ON_WM_MBUTTONDOWN()
+    ON_WM_MBUTTONUP()
+    ON_WM_MOUSELEAVE()
 END_MESSAGE_MAP()
 
 void CImageViewControl::setImage(const cv::Mat& image)
@@ -24,6 +28,7 @@ void CImageViewControl::setImage(const cv::Mat& image)
         image_ = image.clone();
     }
     results_.clear();
+    resetView();
     clearSelection();
     Invalidate();
 }
@@ -73,6 +78,81 @@ cv::Rect CImageViewControl::selectedRect() const
     return selection_;
 }
 
+void CImageViewControl::clampView(double scale, const CRect& client)
+{
+    if (image_.empty() || scale <= 0.0) {
+        return;
+    }
+    const double maxX = std::max(0.0, image_.cols - client.Width() / scale);
+    const double maxY = std::max(0.0, image_.rows - client.Height() / scale);
+    origin_.x = std::max(0.0, std::min(origin_.x, maxX));
+    origin_.y = std::max(0.0, std::min(origin_.y, maxY));
+}
+
+void CImageViewControl::updateBitmapRect()
+{
+    if (image_.empty()) {
+        bitmapRect_.SetRectEmpty();
+        return;
+    }
+    CRect client;
+    GetClientRect(&client);
+    if (client.Width() <= 0 || client.Height() <= 0) {
+        bitmapRect_.SetRectEmpty();
+        return;
+    }
+    const double fit = std::min(static_cast<double>(client.Width()) / image_.cols,
+                                static_cast<double>(client.Height()) / image_.rows);
+    const double scale = fit * zoom_;
+    if (zoom_ <= 1.0) {
+        origin_ = cv::Point2d(0.0, 0.0);
+        const int width = std::max(1, static_cast<int>(image_.cols * scale));
+        const int height = std::max(1, static_cast<int>(image_.rows * scale));
+        bitmapRect_ = CRect(client.left + (client.Width() - width) / 2,
+                            client.top + (client.Height() - height) / 2,
+                            client.left + (client.Width() - width) / 2 + width,
+                            client.top + (client.Height() - height) / 2 + height);
+        return;
+    }
+    clampView(scale, client);
+    const int left = client.left + static_cast<int>(std::lround(-origin_.x * scale));
+    const int top = client.top + static_cast<int>(std::lround(-origin_.y * scale));
+    bitmapRect_ = CRect(left, top,
+                        left + std::max(1, static_cast<int>(std::lround(image_.cols * scale))),
+                        top + std::max(1, static_cast<int>(std::lround(image_.rows * scale))));
+}
+
+void CImageViewControl::resetView()
+{
+    zoom_ = 1.0;
+    origin_ = cv::Point2d(0.0, 0.0);
+    panning_ = false;
+    cursorImage_ = CPoint(-1, -1);
+    updateBitmapRect();
+    Invalidate();
+}
+
+void CImageViewControl::notifyCursor()
+{
+    if (GetParent() != nullptr) {
+        GetParent()->PostMessage(WM_IMAGE_CURSOR_POSITION, 0, 0);
+    }
+}
+
+void CImageViewControl::updateCursor(CPoint point)
+{
+    CPoint current(-1, -1);
+    int x = 0;
+    int y = 0;
+    if (pointToImage(point, x, y)) {
+        current = CPoint(x, y);
+    }
+    cursorImage_ = current;
+    notifyCursor();
+    TRACKMOUSEEVENT tracking = { sizeof(TRACKMOUSEEVENT), TME_LEAVE, GetSafeHwnd(), 0 };
+    TrackMouseEvent(&tracking);
+}
+
 BOOL CImageViewControl::OnEraseBkgnd(CDC* dc)
 {
     (void)dc;
@@ -83,6 +163,7 @@ void CImageViewControl::OnSize(UINT type, int width, int height)
 {
     CWnd::OnSize(type, width, height);
     if (type != SIZE_MINIMIZED) {
+        updateBitmapRect();
         Invalidate();
         UpdateWindow();
     }
@@ -110,8 +191,14 @@ CPoint CImageViewControl::imageToScreen(double x, double y) const
 
 CPoint CImageViewControl::clampToBitmap(CPoint point) const
 {
-    point.x = std::max(bitmapRect_.left, std::min(point.x, bitmapRect_.right - 1));
-    point.y = std::max(bitmapRect_.top, std::min(point.y, bitmapRect_.bottom - 1));
+    CRect client;
+    GetClientRect(&client);
+    CRect visible;
+    if (!visible.IntersectRect(&bitmapRect_, &client)) {
+        return point;
+    }
+    point.x = std::max(visible.left, std::min(point.x, visible.right - 1));
+    point.y = std::max(visible.top, std::min(point.y, visible.bottom - 1));
     return point;
 }
 
@@ -149,10 +236,24 @@ void CImageViewControl::OnLButtonDown(UINT flags, CPoint point)
 
 void CImageViewControl::OnMouseMove(UINT flags, CPoint point)
 {
-    if (dragging_) {
-        dragCurrent_ = clampToBitmap(point);
-        updateSelection();
+    if (panning_) {
+        CRect client;
+        GetClientRect(&client);
+        const double fit = std::min(static_cast<double>(client.Width()) / image_.cols,
+                                    static_cast<double>(client.Height()) / image_.rows);
+        const double scale = fit * zoom_;
+        origin_.x -= (point.x - panLast_.x) / scale;
+        origin_.y -= (point.y - panLast_.y) / scale;
+        panLast_ = point;
+        updateBitmapRect();
         Invalidate();
+    } else {
+        if (dragging_) {
+            dragCurrent_ = clampToBitmap(point);
+            updateSelection();
+            Invalidate();
+        }
+        updateCursor(point);
     }
     CWnd::OnMouseMove(flags, point);
 }
@@ -172,28 +273,73 @@ void CImageViewControl::OnLButtonUp(UINT flags, CPoint point)
     CWnd::OnLButtonUp(flags, point);
 }
 
+BOOL CImageViewControl::OnMouseWheel(UINT flags, short delta, CPoint point)
+{
+    (void)flags;
+    if (image_.empty() || bitmapRect_.Width() <= 0) {
+        return TRUE;
+    }
+    ScreenToClient(&point);
+    const double oldZoom = zoom_;
+    const double newZoom = std::max(1.0, std::min(64.0, oldZoom * (delta > 0 ? 1.25 : 0.8)));
+    if (newZoom == oldZoom) {
+        return TRUE;
+    }
+    const double worldX = (point.x - bitmapRect_.left) * image_.cols / bitmapRect_.Width();
+    const double worldY = (point.y - bitmapRect_.top) * image_.rows / bitmapRect_.Height();
+    CRect client;
+    GetClientRect(&client);
+    const double fit = std::min(static_cast<double>(client.Width()) / image_.cols,
+                                static_cast<double>(client.Height()) / image_.rows);
+    zoom_ = newZoom;
+    origin_ = cv::Point2d(worldX - point.x / (fit * zoom_),
+                          worldY - point.y / (fit * zoom_));
+    updateBitmapRect();
+    updateCursor(point);
+    Invalidate();
+    return TRUE;
+}
+
+void CImageViewControl::OnMButtonDown(UINT flags, CPoint point)
+{
+    if (zoom_ > 1.0 && !image_.empty()) {
+        SetCapture();
+        panning_ = true;
+        panLast_ = point;
+    }
+    CWnd::OnMButtonDown(flags, point);
+}
+
+void CImageViewControl::OnMButtonUp(UINT flags, CPoint point)
+{
+    if (panning_) {
+        panning_ = false;
+        ReleaseCapture();
+        updateCursor(point);
+    }
+    CWnd::OnMButtonUp(flags, point);
+}
+
+void CImageViewControl::OnMouseLeave()
+{
+    cursorImage_ = CPoint(-1, -1);
+    notifyCursor();
+}
+
 void CImageViewControl::OnPaint()
 {
     CPaintDC dc(this);
     CRect client;
     GetClientRect(&client);
     dc.FillSolidRect(client, RGB(24, 26, 28));
-    bitmapRect_.SetRectEmpty();
+    updateBitmapRect();
     if (image_.empty()) {
+        labelRects_.clear();
         dc.SetTextColor(RGB(180, 180, 180));
         dc.SetBkMode(TRANSPARENT);
         dc.TextOutW(12, 12, L"暂无图像");
         return;
     }
-
-    const double scale = std::min(static_cast<double>(client.Width()) / image_.cols,
-                                  static_cast<double>(client.Height()) / image_.rows);
-    const int width = std::max(1, static_cast<int>(image_.cols * scale));
-    const int height = std::max(1, static_cast<int>(image_.rows * scale));
-    bitmapRect_ = CRect(client.left + (client.Width() - width) / 2,
-                        client.top + (client.Height() - height) / 2,
-                        client.left + (client.Width() - width) / 2 + width,
-                        client.top + (client.Height() - height) / 2 + height);
 
     struct GrayBitmapInfo {
         BITMAPINFOHEADER header;
