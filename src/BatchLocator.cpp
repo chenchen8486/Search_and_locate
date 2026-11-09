@@ -1,4 +1,5 @@
 #include "BatchLocator.h"
+#include "BatchControl.h"
 
 #include "LocatorInternal.h"
 #include "ResultRefiner.h"
@@ -8,8 +9,10 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <stdexcept>
+#include <utility>
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -159,7 +162,10 @@ struct BatchExecutor {
         return results;
     }
 
-    static std::vector<BatchResult> run(const std::vector<BatchTask>& tasks, int threadCount)
+    static std::vector<BatchResult> run(const std::vector<BatchTask>& tasks, int threadCount,
+                                        const BatchObserver& observer,
+                                        std::vector<char>& finished,
+                                        std::atomic<int>& completed)
     {
         const size_t chunkSize = 4;
         const size_t chunkCount = (tasks.size() + chunkSize - 1) / chunkSize;
@@ -168,12 +174,21 @@ struct BatchExecutor {
 #pragma omp parallel for num_threads(workerCount(threadCount))
 #endif
         for (long long chunk = 0; chunk < static_cast<long long>(chunkCount); ++chunk) {
+            if (observer.cancel && observer.cancel()) {
+                continue;
+            }
             const size_t begin = static_cast<size_t>(chunk) * chunkSize;
             const size_t end = std::min(tasks.size(), begin + chunkSize);
             const std::vector<BatchTask> chunkTasks(tasks.begin() + begin, tasks.begin() + end);
             const std::vector<BatchResult> chunkResults = runChunk(chunkTasks);
             for (size_t offset = 0; offset < chunkTasks.size(); ++offset) {
                 results[begin + offset] = chunkResults[offset];
+                finished[begin + offset] = 1;
+            }
+            if (observer.progress) {
+                const int done = completed.fetch_add(static_cast<int>(chunkTasks.size())) +
+                                 static_cast<int>(chunkTasks.size());
+                observer.progress(done, static_cast<int>(tasks.size()));
             }
         }
         return results;
@@ -183,57 +198,91 @@ struct BatchExecutor {
 } // namespace locator_internal
 #endif
 
-std::vector<BatchResult> executeBatch(const std::vector<BatchTask>& tasks,
-                                      int threadCount)
+int locator_internal::executeBatchObserved(const std::vector<BatchTask>& tasks, int threadCount,
+                                            const BatchObserver& observer,
+                                            std::vector<BatchResult>& results)
 {
+    std::vector<char> finished(tasks.size(), 0);
+    std::atomic<int> completed(0);
 #ifdef LOCATOR_WITH_CUDA
-    if (locator_internal::BatchExecutor::applies(tasks)) {
-        return locator_internal::BatchExecutor::run(tasks, threadCount);
-    }
+    if (BatchExecutor::applies(tasks)) {
+        results = BatchExecutor::run(tasks, threadCount, observer, finished, completed);
+    } else
 #endif
-    std::vector<BatchResult> results(tasks.size());
-    const auto runTask = [&](size_t index) {
-        const BatchTask& task = tasks[index];
-        BatchResult& result = results[index];
-        result.id = task.id;
-        const auto totalStart = std::chrono::steady_clock::now();
-        auto phaseStart = totalStart;
-        bool preprocessing = true;
-        try {
-            Locator locator;
-            result.error = locator.initialize(task.model, task.config);
-            phaseStart = std::chrono::steady_clock::now();
-            result.preprocessMs = std::chrono::duration<double, std::milli>(phaseStart - totalStart).count();
-            preprocessing = false;
-            if (result.error == LocatorError::Ok) {
-                result.error = locator.execute(task.search, result.matches);
+    {
+        results.assign(tasks.size(), BatchResult());
+        const auto runTask = [&](size_t index) {
+            const BatchTask& task = tasks[index];
+            BatchResult& result = results[index];
+            result.id = task.id;
+            const auto totalStart = std::chrono::steady_clock::now();
+            auto phaseStart = totalStart;
+            bool preprocessing = true;
+            try {
+                Locator locator;
+                result.error = locator.initialize(task.model, task.config);
+                phaseStart = std::chrono::steady_clock::now();
+                result.preprocessMs = std::chrono::duration<double, std::milli>(phaseStart - totalStart).count();
+                preprocessing = false;
+                if (result.error == LocatorError::Ok) {
+                    result.error = locator.execute(task.search, result.matches);
+                }
+                result.searchMs = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - phaseStart).count();
+            } catch (...) {
+                result.error = LocatorError::InternalError;
+                result.matches.clear();
+                const auto end = std::chrono::steady_clock::now();
+                if (preprocessing) {
+                    result.preprocessMs = std::chrono::duration<double, std::milli>(end - totalStart).count();
+                    result.searchMs = 0.0;
+                } else {
+                    result.searchMs = std::chrono::duration<double, std::milli>(end - phaseStart).count();
+                }
             }
-            result.searchMs = std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now() - phaseStart).count();
-        } catch (...) {
-            result.error = LocatorError::InternalError;
-            result.matches.clear();
-            const auto end = std::chrono::steady_clock::now();
-            if (preprocessing) {
-                result.preprocessMs = std::chrono::duration<double, std::milli>(end - totalStart).count();
-                result.searchMs = 0.0;
-            } else {
-                result.searchMs = std::chrono::duration<double, std::milli>(end - phaseStart).count();
-            }
-        }
-        result.totalMs = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - totalStart).count();
-    };
+            result.totalMs = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - totalStart).count();
+        };
 
 #ifdef _OPENMP
 #pragma omp parallel for num_threads(workerCount(threadCount))
-    for (long long index = 0; index < static_cast<long long>(tasks.size()); ++index) {
-        runTask(static_cast<size_t>(index));
-    }
+        for (long long index = 0; index < static_cast<long long>(tasks.size()); ++index) {
+            if (observer.cancel && observer.cancel()) {
+                continue;
+            }
+            runTask(static_cast<size_t>(index));
+            finished[index] = 1;
+            if (observer.progress) {
+                observer.progress(completed.fetch_add(1) + 1, static_cast<int>(tasks.size()));
+            }
+        }
 #else
-    for (size_t index = 0; index < tasks.size(); ++index) {
-        runTask(index);
-    }
+        for (size_t index = 0; index < tasks.size(); ++index) {
+            if (observer.cancel && observer.cancel()) {
+                continue;
+            }
+            runTask(index);
+            finished[index] = 1;
+            if (observer.progress) {
+                observer.progress(completed.fetch_add(1) + 1, static_cast<int>(tasks.size()));
+            }
+        }
 #endif
+    }
+    std::vector<BatchResult> completedResults;
+    completedResults.reserve(tasks.size());
+    for (size_t index = 0; index < tasks.size(); ++index) {
+        if (finished[index]) {
+            completedResults.push_back(std::move(results[index]));
+        }
+    }
+    results = std::move(completedResults);
+    return static_cast<int>(results.size());
+}
+
+std::vector<BatchResult> executeBatch(const std::vector<BatchTask>& tasks, int threadCount)
+{
+    std::vector<BatchResult> results;
+    locator_internal::executeBatchObserved(tasks, threadCount, locator_internal::BatchObserver(), results);
     return results;
 }

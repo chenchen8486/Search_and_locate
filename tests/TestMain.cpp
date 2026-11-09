@@ -21,6 +21,7 @@ void testGpuConstantSearchWindow();
 void testMfcWorkflowSingleSearch();
 void testMfcWorkflowSingleExceptions();
 void testMfcWorkflowBatchTiming();
+void testMfcWorkflowBatchCancellation();
 void testRoiRestrictsSearch();
 void testRoiInvalidRejected();
 void testTopNScoreAndStableOrder();
@@ -196,7 +197,8 @@ const TestCase tests[] = {
 #endif
     { "MfcWorkflow.SingleSearch", testMfcWorkflowSingleSearch },
     { "MfcWorkflow.SingleExceptions", testMfcWorkflowSingleExceptions },
-    { "MfcWorkflow.BatchTiming", testMfcWorkflowBatchTiming }
+    { "MfcWorkflow.BatchTiming", testMfcWorkflowBatchTiming },
+    { "MfcWorkflow.BatchCancellation", testMfcWorkflowBatchCancellation }
 };
 
 bool isCoreTest(const std::string& name)

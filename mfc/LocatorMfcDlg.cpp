@@ -25,6 +25,19 @@ struct SingleCompletion {
     LocatorWorkflow::SingleResult run;
 };
 
+constexpr UINT WM_LOCATOR_BATCH_PROGRESS = WM_APP + 205;
+constexpr UINT WM_LOCATOR_BATCH_COMPLETE = WM_APP + 206;
+
+struct BatchProgressData {
+    int completed = 0;
+    int total = 0;
+};
+
+struct BatchCompletion {
+    unsigned generation = 0;
+    LocatorWorkflow::BatchRun run;
+};
+
 int dividerPaintCount = 0;
 int imagePaintCount = 0;
 
@@ -104,6 +117,7 @@ BEGIN_MESSAGE_MAP(CLocatorMfcDlg, CDialogEx)
     ON_BN_CLICKED(IDC_EXECUTE, &CLocatorMfcDlg::OnExecute)
     ON_BN_CLICKED(IDC_BATCH_BROWSE, &CLocatorMfcDlg::OnBatchBrowse)
     ON_BN_CLICKED(IDC_BATCH_RUN, &CLocatorMfcDlg::OnBatchRun)
+    ON_BN_CLICKED(IDC_BATCH_CANCEL, &CLocatorMfcDlg::OnBatchCancel)
     ON_CONTROL_RANGE(EN_CHANGE, IDC_ANGLE_MIN, IDC_Y_VICINITY, &CLocatorMfcDlg::OnParameterChanged)
     ON_CBN_SELCHANGE(IDC_BACKEND, &CLocatorMfcDlg::OnChoiceChanged)
     ON_CBN_SELCHANGE(IDC_SUBPIXEL, &CLocatorMfcDlg::OnChoiceChanged)
@@ -113,6 +127,8 @@ BEGIN_MESSAGE_MAP(CLocatorMfcDlg, CDialogEx)
     ON_MESSAGE(WM_IMAGE_CURSOR_POSITION, &CLocatorMfcDlg::OnImageCursorPosition)
     ON_MESSAGE(WM_LOCATOR_SELF_TEST, &CLocatorMfcDlg::OnSelfTest)
     ON_MESSAGE(WM_LOCATOR_SINGLE_COMPLETE, &CLocatorMfcDlg::OnSingleComplete)
+    ON_MESSAGE(WM_LOCATOR_BATCH_PROGRESS, &CLocatorMfcDlg::OnBatchProgress)
+    ON_MESSAGE(WM_LOCATOR_BATCH_COMPLETE, &CLocatorMfcDlg::OnBatchComplete)
     ON_WM_DESTROY()
     ON_WM_PAINT()
     ON_WM_ERASEBKGND()
@@ -232,7 +248,8 @@ void CLocatorMfcDlg::showInspectorPage(int page)
         IDC_BATCH_DIRECTORY_TITLE, IDC_BATCH_DIRECTORY_LABEL, IDC_BATCH_PATH,
         IDC_BATCH_BROWSE, IDC_BATCH_SETTINGS_TITLE, IDC_BATCH_SETTINGS_HINT,
         IDC_BATCH_COUNT_LABEL, IDC_BATCH_THREADS_LABEL, IDC_BATCH_COUNT,
-        IDC_BATCH_THREADS, IDC_BATCH_CONFIG_HINT, IDC_BATCH_RUN, IDC_BATCH_STATS_TITLE, IDC_BATCH_STATS
+        IDC_BATCH_THREADS, IDC_BATCH_CONFIG_HINT, IDC_BATCH_RUN, IDC_BATCH_CANCEL,
+        IDC_BATCH_PROGRESS, IDC_BATCH_STATS_TITLE, IDC_BATCH_STATS
     };
     for (int id : searchIds) {
         GetDlgItem(id)->ShowWindow(page == 0 ? SW_SHOW : SW_HIDE);
@@ -437,10 +454,13 @@ void CLocatorMfcDlg::applyLayout()
     place(IDC_BATCH_THREADS, box(bodyX + batchFieldWidth + sx(8),
         bodyY + sy(192), batchFieldWidth, sy(32)));
     place(IDC_BATCH_CONFIG_HINT, box(bodyX, bodyY + sy(234), bodyWidth, sy(54)));
-    place(IDC_BATCH_RUN, box(bodyX, bodyY + sy(296), bodyWidth, sy(36)));
-    place(IDC_BATCH_STATS_TITLE, box(bodyX, bodyY + sy(352), bodyWidth, sy(18)));
-    place(IDC_BATCH_STATS, box(bodyX, bodyY + sy(376), bodyWidth,
-        inspector.bottom - bodyY - sy(392)));
+    place(IDC_BATCH_RUN, box(bodyX, bodyY + sy(296), batchFieldWidth, sy(36)));
+    place(IDC_BATCH_CANCEL, box(bodyX + batchFieldWidth + sx(8), bodyY + sy(296),
+        batchFieldWidth, sy(36)));
+    place(IDC_BATCH_PROGRESS, box(bodyX, bodyY + sy(342), bodyWidth, sy(18)));
+    place(IDC_BATCH_STATS_TITLE, box(bodyX, bodyY + sy(368), bodyWidth, sy(18)));
+    place(IDC_BATCH_STATS, box(bodyX, bodyY + sy(392), bodyWidth,
+        inspector.bottom - bodyY - sy(408)));
     place(IDC_STATUS_TEXT, box(margin, height - sy(25), width - margin * 2, sy(19)));
 
     HDWP deferred = BeginDeferWindowPos(static_cast<int>(placements.size()));
@@ -1004,7 +1024,7 @@ void CLocatorMfcDlg::setSingleControlsEnabled(bool enabled)
 
 void CLocatorMfcDlg::OnExecute()
 {
-    if (singleRunning_) {
+    if (singleRunning_ || batchRunning_) {
         return;
     }
     clearResultDisplay();
@@ -1123,10 +1143,26 @@ LRESULT CLocatorMfcDlg::OnSingleComplete(WPARAM wParam, LPARAM lParam)
 void CLocatorMfcDlg::OnDestroy()
 {
     ++singleGeneration_;
+    ++batchGeneration_;
     if (singleWorker_.joinable()) {
         singleWorker_.join();
     }
+    if (batchWorker_.joinable()) {
+        batchWorker_.join();
+    }
     singleRunning_ = false;
+    batchRunning_ = false;
+    MSG message;
+    while (PeekMessage(&message, GetSafeHwnd(), WM_LOCATOR_SINGLE_COMPLETE,
+                       WM_LOCATOR_BATCH_COMPLETE, PM_REMOVE)) {
+        if (message.message == WM_LOCATOR_SINGLE_COMPLETE) {
+            delete reinterpret_cast<SingleCompletion*>(message.lParam);
+        } else if (message.message == WM_LOCATOR_BATCH_COMPLETE) {
+            delete reinterpret_cast<BatchCompletion*>(message.lParam);
+        } else if (message.message == WM_LOCATOR_BATCH_PROGRESS) {
+            delete reinterpret_cast<BatchProgressData*>(message.lParam);
+        }
+    }
     CDialogEx::OnDestroy();
 }
 
@@ -1186,95 +1222,213 @@ void CLocatorMfcDlg::OnBatchBrowse()
     }
 }
 
+void CLocatorMfcDlg::setBatchControlsEnabled(bool enabled)
+{
+    const int ids[] = { IDC_BATCH_PATH, IDC_BATCH_BROWSE, IDC_BATCH_COUNT,
+                        IDC_BATCH_THREADS, IDC_BATCH_RUN };
+    for (int id : ids) {
+        GetDlgItem(id)->EnableWindow(enabled);
+    }
+    GetDlgItem(IDC_BATCH_CANCEL)->EnableWindow(!enabled && batchRunning_);
+}
+
+void CLocatorMfcDlg::clearBatchResultDisplay()
+{
+    prepareResultList(true);
+    setBatchStats(std::vector<CString>(7, CString(L"本次未产生")));
+    SetDlgItemText(IDC_BATCH_PROGRESS, L"等待本次执行");
+}
+
+void CLocatorMfcDlg::showBatchResult(const LocatorWorkflow::BatchRun& run)
+{
+    prepareResultList(true);
+    double preprocessSum = 0.0;
+    double searchSum = 0.0;
+    double totalSum = 0.0;
+    int succeeded = 0;
+    int failureRow = 0;
+    std::vector<double> totals;
+    for (const BatchResult& result : run.results) {
+        preprocessSum += result.preprocessMs;
+        searchSum += result.searchMs;
+        totalSum += result.totalMs;
+        totals.push_back(result.totalMs);
+        const bool passed = result.error == LocatorError::Ok && !result.matches.empty();
+        if (passed) {
+            ++succeeded;
+            continue;
+        }
+        CString value;
+        value.Format(L"%d", result.id);
+        const int row = resultsList_.InsertItem(failureRow++, value);
+        resultsList_.SetItemText(row, 1,
+            result.error == LocatorError::Ok ? CString(L"无匹配") : CString(errorText(result.error)));
+        value.Format(L"%.3f", result.preprocessMs);
+        resultsList_.SetItemText(row, 2, value);
+        value.Format(L"%.3f", result.searchMs);
+        resultsList_.SetItemText(row, 3, value);
+        value.Format(L"%.3f", result.totalMs);
+        resultsList_.SetItemText(row, 4, value);
+    }
+    std::sort(totals.begin(), totals.end());
+    const double countValue = static_cast<double>(run.results.size());
+    std::vector<CString> statistics;
+    CString value;
+    value.Format(L"%d / %d", run.completed, run.total);
+    statistics.push_back(value);
+    if (run.cancelled) {
+        statistics.push_back(L"已取消");
+    } else {
+        value.Format(L"%d / %d", succeeded, run.completed - succeeded);
+        statistics.push_back(value);
+    }
+    const auto statistic = [&statistics](double number) {
+        CString value;
+        value.Format(L"%.3f ms", number);
+        statistics.push_back(value);
+    };
+    statistic(countValue > 0.0 ? preprocessSum / countValue : 0.0);
+    statistic(countValue > 0.0 ? searchSum / countValue : 0.0);
+    statistic(countValue > 0.0 ? totalSum / countValue : 0.0);
+    statistic(totals.empty() ? 0.0 : totals[static_cast<size_t>(std::ceil(countValue * 0.99)) - 1]);
+    statistic(run.totalMs);
+    setBatchStats(statistics);
+    CString progress;
+    progress.Format(L"已完成 %d / %d", run.completed, run.total);
+    SetDlgItemText(IDC_BATCH_PROGRESS, progress);
+    if (run.cancelled) {
+        SetDlgItemText(IDC_STATUS_TEXT, L"批量评估已取消，只保留已完成任务的结果");
+    } else {
+        SetDlgItemText(IDC_STATUS_TEXT, L"批量评估完成，下方列表仅显示失败或无匹配任务");
+    }
+}
+
+void CLocatorMfcDlg::OnBatchCancel()
+{
+    if (batchRunning_) {
+        batchCancelRequested_ = true;
+        GetDlgItem(IDC_BATCH_CANCEL)->EnableWindow(FALSE);
+        SetDlgItemText(IDC_STATUS_TEXT, L"正在取消，当前任务或 CUDA 分组完成后停止");
+    }
+}
+
 void CLocatorMfcDlg::OnBatchRun()
 {
+    if (batchRunning_ || singleRunning_) {
+        return;
+    }
+    clearBatchResultDisplay();
     CString directory;
     GetDlgItemText(IDC_BATCH_PATH, directory);
     directory.Trim();
     int count = 0;
     int threads = 0;
     LocatorConfig config;
+    CString diagnosis;
     if (directory.IsEmpty()) {
-        AfxMessageBox(L"请输入或选择 Thick 数据目录");
+        SetDlgItemText(IDC_STATUS_TEXT, L"请输入或选择 Thick 数据目录");
         return;
     }
-    if (!readInt(this, IDC_BATCH_COUNT, count) || count < 0 ||
-        !readInt(this, IDC_BATCH_THREADS, threads) || !readConfig(config)) {
-        AfxMessageBox(L"批量任务数、线程数或搜索参数无效");
+    if (!readInt(this, IDC_BATCH_COUNT, count) || count < 0) {
+        SetDlgItemText(IDC_STATUS_TEXT, L"批量任务数必须是大于或等于 0 的整数");
+        return;
+    }
+    if (!readInt(this, IDC_BATCH_THREADS, threads)) {
+        SetDlgItemText(IDC_STATUS_TEXT, L"批量线程数必须是整数，0 表示自动选择");
+        return;
+    }
+    if (!readConfig(config, &diagnosis)) {
+        SetDlgItemText(IDC_STATUS_TEXT, diagnosis);
         return;
     }
     config.useRoi = useRoi_;
-    if (useRoi_) {
-        config.roi = roi_;
-    }
-
-    CWaitCursor wait;
+    config.roi = roi_;
+    const std::string path(CT2A(directory.GetString(), CP_ACP));
+    const unsigned generation = ++batchGeneration_;
+    batchCancelRequested_ = false;
+    batchRunning_ = true;
+    setBatchControlsEnabled(false);
+    setSingleControlsEnabled(false);
+    SetDlgItemText(IDC_STATUS_TEXT, L"正在后台准备并执行批量评估");
     try {
-        const std::vector<ThickPair> pairs = findThickPairs(
-            std::string(CT2A(directory.GetString(), CP_ACP)));
-        const int actualCount = count == 0 ? static_cast<int>(pairs.size()) : count;
-        BatchDataSet data = makeBenchmarkTasks(pairs, actualCount);
-        for (BatchTask& task : data.tasks) {
-            task.config = config;
-        }
-        std::vector<BatchResult> results;
-        const double wallMs = LocatorWorkflow::runBatch(data.tasks, threads, results);
-
-        prepareResultList(true);
-        double preprocessSum = 0.0;
-        double searchSum = 0.0;
-        double totalSum = 0.0;
-        int succeeded = 0;
-        int failureRow = 0;
-        std::vector<double> totals;
-        for (const BatchResult& result : results) {
-            preprocessSum += result.preprocessMs;
-            searchSum += result.searchMs;
-            totalSum += result.totalMs;
-            totals.push_back(result.totalMs);
-            const bool passed = result.error == LocatorError::Ok && !result.matches.empty();
-            if (passed) {
-                ++succeeded;
-                continue;
+        batchWorker_ = std::thread([this, path, count, threads, config, generation]() {
+            BatchCompletion* completion = new BatchCompletion;
+            completion->generation = generation;
+            try {
+                const std::vector<ThickPair> pairs = findThickPairs(path);
+                const int actualCount = count == 0 ? static_cast<int>(pairs.size()) : count;
+                BatchDataSet data = makeBenchmarkTasks(pairs, actualCount);
+                for (BatchTask& task : data.tasks) {
+                    task.config = config;
+                }
+                completion->run = LocatorWorkflow::runBatchControlled(data.tasks, threads,
+                    [this](int completed, int total) {
+                        BatchProgressData* progress = new BatchProgressData{ completed, total };
+                        if (!PostMessage(WM_LOCATOR_BATCH_PROGRESS, 0,
+                                         reinterpret_cast<LPARAM>(progress))) {
+                            delete progress;
+                        }
+                    },
+                    [this]() { return batchCancelRequested_.load(); });
+            } catch (const std::exception& error) {
+                completion->run.diagnostic = error.what();
+                completion->run.total = count;
+            } catch (...) {
+                completion->run.diagnostic = "未知异常";
+                completion->run.total = count;
             }
-            CString value;
-            value.Format(L"%d", result.id);
-            const int row = resultsList_.InsertItem(failureRow++, value);
-            resultsList_.SetItemText(row, 1,
-                result.error == LocatorError::Ok ? CString(L"无匹配") : CString(errorText(result.error)));
-            value.Format(L"%.3f", result.preprocessMs);
-            resultsList_.SetItemText(row, 2, value);
-            value.Format(L"%.3f", result.searchMs);
-            resultsList_.SetItemText(row, 3, value);
-            value.Format(L"%.3f", result.totalMs);
-            resultsList_.SetItemText(row, 4, value);
-        }
-        std::sort(totals.begin(), totals.end());
-        const double countValue = static_cast<double>(results.size());
-        const size_t p99Index = static_cast<size_t>(std::ceil(countValue * 0.99)) - 1;
-        std::vector<CString> statistics;
-        CString value;
-        value.Format(L"%d", static_cast<int>(results.size()));
-        statistics.push_back(value);
-        value.Format(L"%d / %d", succeeded, static_cast<int>(results.size()) - succeeded);
-        statistics.push_back(value);
-        value.Format(L"%.3f ms", preprocessSum / countValue);
-        statistics.push_back(value);
-        value.Format(L"%.3f ms", searchSum / countValue);
-        statistics.push_back(value);
-        value.Format(L"%.3f ms", totalSum / countValue);
-        statistics.push_back(value);
-        value.Format(L"%.3f ms", totals[p99Index]);
-        statistics.push_back(value);
-        value.Format(L"%.3f ms", wallMs);
-        statistics.push_back(value);
-        setBatchStats(statistics);
-        SetDlgItemText(IDC_STATUS_TEXT, L"批量评估完成，下方列表仅显示失败或无匹配任务");
+            if (!PostMessage(WM_LOCATOR_BATCH_COMPLETE, 0,
+                             reinterpret_cast<LPARAM>(completion))) {
+                delete completion;
+            }
+        });
     } catch (const std::exception& error) {
+        batchRunning_ = false;
+        setBatchControlsEnabled(true);
+        setSingleControlsEnabled(true);
         const CString message(CA2W(error.what(), CP_UTF8));
-        SetDlgItemText(IDC_STATUS_TEXT, message);
-        AfxMessageBox(message);
+        SetDlgItemText(IDC_STATUS_TEXT, L"无法启动批量评估：" + message);
     }
+}
+
+LRESULT CLocatorMfcDlg::OnBatchProgress(WPARAM wParam, LPARAM lParam)
+{
+    (void)wParam;
+    const BatchProgressData* progress = reinterpret_cast<const BatchProgressData*>(lParam);
+    if (progress != nullptr && batchRunning_) {
+        CString text;
+        text.Format(L"已完成 %d / %d", progress->completed, progress->total);
+        SetDlgItemText(IDC_BATCH_PROGRESS, text);
+    }
+    delete progress;
+    return 0;
+}
+
+LRESULT CLocatorMfcDlg::OnBatchComplete(WPARAM wParam, LPARAM lParam)
+{
+    (void)wParam;
+    BatchCompletion* completion = reinterpret_cast<BatchCompletion*>(lParam);
+    if (completion == nullptr) {
+        return 0;
+    }
+    const bool current = completion->generation == batchGeneration_;
+    batchRunning_ = false;
+    if (batchWorker_.joinable()) {
+        batchWorker_.join();
+    }
+    setBatchControlsEnabled(true);
+    setSingleControlsEnabled(true);
+    if (current) {
+        if (!completion->run.diagnostic.empty()) {
+            clearBatchResultDisplay();
+            const CString message(CA2W(completion->run.diagnostic.c_str(), CP_UTF8));
+            SetDlgItemText(IDC_STATUS_TEXT, L"批量评估失败：" + message);
+        } else {
+            showBatchResult(completion->run);
+        }
+    }
+    delete completion;
+    return 0;
 }
 
 void CLocatorMfcDlg::clearResultDisplay()
@@ -2088,7 +2242,25 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     SetDlgItemText(IDC_BATCH_COUNT, L"0");
     SetDlgItemText(IDC_BATCH_THREADS, L"20");
     OnBatchRun();
-    require(batchStats_.GetItemText(0, 1) == L"197" &&
+    require(!GetDlgItem(IDC_BATCH_RUN)->IsWindowEnabled() &&
+            GetDlgItem(IDC_BATCH_CANCEL)->IsWindowEnabled(),
+            "批量执行期间未限制重复运行或未提供取消");
+    showInspectorPage(0);
+    showInspectorPage(1);
+    const auto waitBatch = [this, &require] {
+        const DWORD waitStart = GetTickCount();
+        while (!GetDlgItem(IDC_BATCH_RUN)->IsWindowEnabled()) {
+            require(GetTickCount() - waitStart < 120000, "等待批量后台执行超时");
+            MSG message;
+            while (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE)) {
+                TranslateMessage(&message);
+                DispatchMessage(&message);
+            }
+            Sleep(1);
+        }
+    };
+    waitBatch();
+    require(batchStats_.GetItemText(0, 1) == L"197 / 197" &&
             batchStats_.GetItemText(1, 1) == L"197 / 0",
             "对话框批量评估未通过 197 对数据");
     if (previewPath != nullptr && *previewPath != L'\0') {
@@ -2097,6 +2269,16 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
         savePreview(batchPreview.c_str());
         showInspectorPage(0);
     }
+    SetDlgItemText(IDC_BATCH_COUNT, L"500");
+    OnBatchRun();
+    OnBatchCancel();
+    waitBatch();
+    CString cancelStatus;
+    GetDlgItemText(IDC_STATUS_TEXT, cancelStatus);
+    require(cancelStatus.Find(L"取消") >= 0 && batchStats_.GetItemText(1, 1) == L"已取消",
+            "取消批量后未显示部分完成状态");
+    require(batchStats_.GetItemText(0, 1) != L"500 / 500" || resultsList_.GetItemCount() == 0,
+            "取消后把未执行任务冒充为已完成");
 
     const CString batchCountBeforeReset = batchStats_.GetItemText(0, 1);
     CString batchPathBeforeReset;

@@ -9,6 +9,7 @@
 #include <afxwin.h>
 #include <opencv2/core.hpp>
 
+#include <atomic>
 #include <functional>
 #include <string>
 #include <thread>
@@ -35,11 +36,14 @@ protected:
     afx_msg void OnExecute();
     afx_msg void OnBatchBrowse();
     afx_msg void OnBatchRun();
+    afx_msg void OnBatchCancel();
     afx_msg void OnModeTabsChanged(NMHDR* header, LRESULT* result);
     afx_msg void OnResultItemChanged(NMHDR* header, LRESULT* result);
     afx_msg LRESULT OnImageSelectionChanged(WPARAM wParam, LPARAM lParam);
     afx_msg LRESULT OnImageCursorPosition(WPARAM wParam, LPARAM lParam);
     afx_msg LRESULT OnSingleComplete(WPARAM wParam, LPARAM lParam);
+    afx_msg LRESULT OnBatchProgress(WPARAM wParam, LPARAM lParam);
+    afx_msg LRESULT OnBatchComplete(WPARAM wParam, LPARAM lParam);
     afx_msg LRESULT OnSelfTest(WPARAM wParam, LPARAM lParam);
     afx_msg void OnPaint();
     afx_msg BOOL OnEraseBkgnd(CDC* dc);
@@ -66,7 +70,10 @@ private:
     void writeConfig(const LocatorConfig& config);
     void captureBaseline();
     void setSingleControlsEnabled(bool enabled);
+    void setBatchControlsEnabled(bool enabled);
     void showSingleResult(const LocatorWorkflow::SingleResult& run);
+    void clearBatchResultDisplay();
+    void showBatchResult(const LocatorWorkflow::BatchRun& run);
     void prepareResultList(bool batch);
     void resizeResultColumns();
     void initializeLayout();
@@ -105,6 +112,10 @@ private:
     std::thread singleWorker_;
     bool singleRunning_ = false;
     unsigned singleGeneration_ = 0;
+    std::thread batchWorker_;
+    bool batchRunning_ = false;
+    std::atomic<bool> batchCancelRequested_ = false;
+    unsigned batchGeneration_ = 0;
     std::function<void()> selfTestAction_;
     std::string selfTestError_;
 

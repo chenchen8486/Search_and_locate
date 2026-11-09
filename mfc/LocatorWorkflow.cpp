@@ -1,4 +1,5 @@
 #include "LocatorWorkflow.h"
+#include "BatchControl.h"
 
 #include <chrono>
 
@@ -62,6 +63,37 @@ double runBatch(const std::vector<BatchTask>& tasks, int threads,
     results = executeBatch(tasks, threads);
     return std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - start).count();
+}
+
+BatchRun runBatchControlled(const std::vector<BatchTask>& tasks, int threads,
+                            const std::function<void(int, int)>& progress,
+                            const std::function<bool()>& cancel)
+{
+    BatchRun run;
+    run.total = static_cast<int>(tasks.size());
+    const auto start = std::chrono::steady_clock::now();
+    try {
+        locator_internal::BatchObserver observer;
+        observer.progress = progress;
+        observer.cancel = cancel;
+        run.completed = locator_internal::executeBatchObserved(tasks, threads, observer, run.results);
+        run.cancelled = cancel && cancel();
+    } catch (const cv::Exception& error) {
+        run.diagnostic = std::string("OpenCV 异常：") + error.what();
+        run.results.clear();
+        run.completed = 0;
+    } catch (const std::exception& error) {
+        run.diagnostic = error.what();
+        run.results.clear();
+        run.completed = 0;
+    } catch (...) {
+        run.diagnostic = "未知异常";
+        run.results.clear();
+        run.completed = 0;
+    }
+    run.totalMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - start).count();
+    return run;
 }
 
 } // namespace LocatorWorkflow

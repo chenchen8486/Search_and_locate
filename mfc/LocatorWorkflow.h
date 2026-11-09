@@ -19,10 +19,22 @@ struct SingleResult {
     std::string diagnostic;
 };
 
+struct BatchRun {
+    std::vector<BatchResult> results;
+    int completed = 0;
+    int total = 0;
+    double totalMs = 0.0;
+    bool cancelled = false;
+    std::string diagnostic;
+};
+
 SingleResult protectSingle(const std::function<SingleResult()>& action);
 SingleResult runSingle(const cv::Mat& model, const cv::Mat& search,
                        const LocatorConfig& config);
 double runBatch(const std::vector<BatchTask>& tasks, int threads,
                 std::vector<BatchResult>& results);
+BatchRun runBatchControlled(const std::vector<BatchTask>& tasks, int threads,
+                            const std::function<void(int, int)>& progress,
+                            const std::function<bool()>& cancel);
 
 } // namespace LocatorWorkflow

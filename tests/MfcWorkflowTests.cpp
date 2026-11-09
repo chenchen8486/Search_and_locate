@@ -4,6 +4,7 @@
 
 #include <opencv2/core.hpp>
 
+#include <atomic>
 #include <stdexcept>
 #include <vector>
 
@@ -32,6 +33,32 @@ void testMfcWorkflowBatchTiming()
         expect(result.error == LocatorError::Ok && result.matches.size() == 1,
                "MFC 工作流批量任务 " + std::to_string(result.id) + " 失败");
     }
+}
+
+void testMfcWorkflowBatchCancellation()
+{
+    const std::vector<ThickPair> pairs = findThickPairs(realDataDirectory());
+    BatchDataSet data = makeBenchmarkTasks(pairs, 197);
+    std::atomic<bool> cancelled(false);
+    std::atomic<int> progressCalls(0);
+    const LocatorWorkflow::BatchRun run = LocatorWorkflow::runBatchControlled(
+        data.tasks, 20,
+        [&cancelled, &progressCalls](int completed, int total) {
+            expect(total == 197 && completed > 0, "批量进度数量无效");
+            ++progressCalls;
+            cancelled = true;
+        },
+        [&cancelled]() { return cancelled.load(); });
+    expect(run.cancelled && run.results.size() < 197,
+           "取消后仍启动了全部批量任务");
+    expect(run.completed == static_cast<int>(run.results.size()) &&
+           progressCalls == run.completed,
+           "取消后的进度与已完成结果数量不一致");
+    for (size_t index = 0; index < run.results.size(); ++index) {
+        expect(index == 0 || run.results[index - 1].id < run.results[index].id,
+               "取消后的批量结果没有保持输入相对顺序");
+    }
+    expect(run.totalMs >= 0.0, "取消批量计时不应为负数");
 }
 
 void testMfcWorkflowSingleExceptions()
