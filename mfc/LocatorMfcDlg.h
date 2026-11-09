@@ -37,6 +37,8 @@ protected:
     afx_msg void OnBatchBrowse();
     afx_msg void OnBatchRun();
     afx_msg void OnBatchCancel();
+    afx_msg void OnBatchExport();
+    afx_msg void OnBatchFilterChanged();
     afx_msg void OnModeTabsChanged(NMHDR* header, LRESULT* result);
     afx_msg void OnResultItemChanged(NMHDR* header, LRESULT* result);
     afx_msg LRESULT OnImageSelectionChanged(WPARAM wParam, LPARAM lParam);
@@ -74,6 +76,7 @@ private:
     void showSingleResult(const LocatorWorkflow::SingleResult& run);
     void clearBatchResultDisplay();
     void showBatchResult(const LocatorWorkflow::BatchRun& run);
+    void populateBatchResults();
     void prepareResultList(bool batch);
     void resizeResultColumns();
     void initializeLayout();
@@ -96,6 +99,7 @@ private:
     CListCtrl batchStats_;
     CComboBox backendCombo_;
     CComboBox subpixelCombo_;
+    CComboBox batchFilter_;
     CTabCtrl modeTabs_;
     CFont titleFont_;
     CFont sectionFont_;
@@ -109,6 +113,8 @@ private:
     bool batchResults_ = false;
     bool useRoi_ = false;
     LocatorRect roi_ = { 0, 0, 0, 0 };
+    std::vector<BatchResult> batchResultData_;
+    std::vector<BatchResult> displayedBatchResults_;
     std::thread singleWorker_;
     bool singleRunning_ = false;
     unsigned singleGeneration_ = 0;

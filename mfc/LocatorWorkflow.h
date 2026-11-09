@@ -28,6 +28,28 @@ struct BatchRun {
     std::string diagnostic;
 };
 
+enum class BatchFilter {
+    All = 0,
+    Matched,
+    NoMatch,
+    Error
+};
+
+struct BatchSummary {
+    int matched = 0;
+    int noMatch = 0;
+    int errors = 0;
+    double preprocessMeanMs = 0.0;
+    double searchMeanMs = 0.0;
+    double totalMeanMs = 0.0;
+    double p99Ms = 0.0;
+};
+
+BatchSummary summarizeBatch(const BatchRun& run);
+std::vector<BatchResult> filterBatchResults(const std::vector<BatchResult>& results,
+                                            BatchFilter filter);
+void exportBatchCsv(const std::string& path, const std::vector<BatchResult>& results);
+
 SingleResult protectSingle(const std::function<SingleResult()>& action);
 SingleResult runSingle(const cv::Mat& model, const cv::Mat& search,
                        const LocatorConfig& config);

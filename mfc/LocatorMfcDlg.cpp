@@ -118,6 +118,8 @@ BEGIN_MESSAGE_MAP(CLocatorMfcDlg, CDialogEx)
     ON_BN_CLICKED(IDC_BATCH_BROWSE, &CLocatorMfcDlg::OnBatchBrowse)
     ON_BN_CLICKED(IDC_BATCH_RUN, &CLocatorMfcDlg::OnBatchRun)
     ON_BN_CLICKED(IDC_BATCH_CANCEL, &CLocatorMfcDlg::OnBatchCancel)
+    ON_BN_CLICKED(IDC_BATCH_EXPORT, &CLocatorMfcDlg::OnBatchExport)
+    ON_CBN_SELCHANGE(IDC_BATCH_FILTER, &CLocatorMfcDlg::OnBatchFilterChanged)
     ON_CONTROL_RANGE(EN_CHANGE, IDC_ANGLE_MIN, IDC_Y_VICINITY, &CLocatorMfcDlg::OnParameterChanged)
     ON_CBN_SELCHANGE(IDC_BACKEND, &CLocatorMfcDlg::OnChoiceChanged)
     ON_CBN_SELCHANGE(IDC_SUBPIXEL, &CLocatorMfcDlg::OnChoiceChanged)
@@ -186,11 +188,16 @@ BOOL CLocatorMfcDlg::OnInitDialog()
         subpixelCombo_.AddString(value);
     }
     subpixelCombo_.SetCurSel(3);
+    batchFilter_.SubclassDlgItem(IDC_BATCH_FILTER, this);
+    for (const wchar_t* value : { L"全部", L"成功", L"无匹配", L"执行错误" }) {
+        batchFilter_.AddString(value);
+    }
+    batchFilter_.SetCurSel(0);
     const int numericIds[] = {
         IDC_ANGLE_MIN, IDC_ANGLE_MAX, IDC_ANGLE_STEP, IDC_SCALE_MIN, IDC_SCALE_MAX,
         IDC_SCALE_STEP, IDC_PYRAMID, IDC_MIN_SCORE, IDC_MAX_RESULTS,
         IDC_X_VICINITY, IDC_Y_VICINITY, IDC_BATCH_COUNT, IDC_BATCH_THREADS,
-        IDC_ROI_X, IDC_ROI_Y, IDC_ROI_WIDTH, IDC_ROI_HEIGHT, IDC_BACKEND, IDC_SUBPIXEL
+        IDC_ROI_X, IDC_ROI_Y, IDC_ROI_WIDTH, IDC_ROI_HEIGHT, IDC_BACKEND, IDC_SUBPIXEL, IDC_BATCH_FILTER
     };
     for (int id : numericIds) {
         GetDlgItem(id)->SetFont(&numericFont_);
@@ -249,7 +256,7 @@ void CLocatorMfcDlg::showInspectorPage(int page)
         IDC_BATCH_BROWSE, IDC_BATCH_SETTINGS_TITLE, IDC_BATCH_SETTINGS_HINT,
         IDC_BATCH_COUNT_LABEL, IDC_BATCH_THREADS_LABEL, IDC_BATCH_COUNT,
         IDC_BATCH_THREADS, IDC_BATCH_CONFIG_HINT, IDC_BATCH_RUN, IDC_BATCH_CANCEL,
-        IDC_BATCH_PROGRESS, IDC_BATCH_STATS_TITLE, IDC_BATCH_STATS
+        IDC_BATCH_PROGRESS, IDC_BATCH_FILTER, IDC_BATCH_STATS_TITLE, IDC_BATCH_STATS
     };
     for (int id : searchIds) {
         GetDlgItem(id)->ShowWindow(page == 0 ? SW_SHOW : SW_HIDE);
@@ -278,7 +285,7 @@ void CLocatorMfcDlg::setBatchStats(const std::vector<CString>& values)
         throw std::invalid_argument("批量统计必须有七项");
     }
     const wchar_t* labels[] = {
-        L"总任务数", L"成功 / 失败", L"预处理均值", L"搜索均值",
+        L"总任务数", L"成功 / 无匹配 / 错误", L"预处理均值", L"搜索均值",
         L"整体均值", L"P99", L"总耗时"
     };
     batchStats_.DeleteAllItems();
@@ -379,8 +386,11 @@ void CLocatorMfcDlg::applyLayout()
     place(IDC_TEMPLATE_PATH, box(templateX, pathY, templateWidth, sy(18)));
 
     place(IDC_RESULTS_TITLE, box(results.left + sx(12), results.top + sy(10), sx(90), sy(20)));
+    const int exportWidth = sx(116);
     place(IDC_RESULT_HINT, box(results.left + sx(112), results.top + sy(12),
-        results.Width() - sx(124), sy(18)));
+        results.Width() - sx(124) - exportWidth - sx(8), sy(18)));
+    place(IDC_BATCH_EXPORT, box(results.right - sx(12) - exportWidth,
+        results.top + sy(8), exportWidth, sy(24)));
     const int roiLabels[] = { IDC_ROI_X_LABEL, IDC_ROI_Y_LABEL, IDC_ROI_WIDTH_LABEL, IDC_ROI_HEIGHT_LABEL };
     const int roiEdits[] = { IDC_ROI_X, IDC_ROI_Y, IDC_ROI_WIDTH, IDC_ROI_HEIGHT };
     const int roiLeft = results.left + sx(12);
@@ -457,7 +467,9 @@ void CLocatorMfcDlg::applyLayout()
     place(IDC_BATCH_RUN, box(bodyX, bodyY + sy(296), batchFieldWidth, sy(36)));
     place(IDC_BATCH_CANCEL, box(bodyX + batchFieldWidth + sx(8), bodyY + sy(296),
         batchFieldWidth, sy(36)));
-    place(IDC_BATCH_PROGRESS, box(bodyX, bodyY + sy(342), bodyWidth, sy(18)));
+    place(IDC_BATCH_PROGRESS, box(bodyX, bodyY + sy(342), bodyWidth - sx(142), sy(24)));
+    place(IDC_BATCH_FILTER, box(bodyX + bodyWidth - sx(136), bodyY + sy(340),
+        sx(136), sy(150)));
     place(IDC_BATCH_STATS_TITLE, box(bodyX, bodyY + sy(368), bodyWidth, sy(18)));
     place(IDC_BATCH_STATS, box(bodyX, bodyY + sy(392), bodyWidth,
         inspector.bottom - bodyY - sy(408)));
@@ -1174,12 +1186,15 @@ void CLocatorMfcDlg::prepareResultList(bool batch)
     while (header != nullptr && header->GetItemCount() > 0) {
         resultsList_.DeleteColumn(0);
     }
-    const wchar_t* batchTitles[] = { L"任务编号", L"失败原因", L"预处理 ms", L"搜索 ms", L"整体 ms" };
+    const wchar_t* batchTitles[] = {
+        L"任务编号", L"状态", L"匹配序号", L"中心 x", L"中心 y", L"角度",
+        L"尺度", L"分数", L"预处理 ms", L"搜索 ms", L"整体 ms"
+    };
     const wchar_t* singleTitles[] = {
         L"序号", L"中心 x（px）", L"中心 y（px）", L"角度（°）", L"尺度（倍率）", L"分数（%）"
     };
     const wchar_t** titles = batch ? batchTitles : singleTitles;
-    const int count = batch ? 5 : 6;
+    const int count = batch ? 11 : 6;
     for (int column = 0; column < count; ++column) {
         resultsList_.InsertColumn(column, titles[column], LVCFMT_LEFT, 100);
     }
@@ -1194,17 +1209,23 @@ void CLocatorMfcDlg::resizeResultColumns()
         return;
     }
     const int count = header->GetItemCount();
-    if (count != 5 && count != 6) {
-        return;
-    }
     CRect client;
     resultsList_.GetClientRect(&client);
     const int width = client.Width();
-    const int batchWidths[] = { 12, 36, 17, 17, 18 };
+    if (count == 11) {
+        const int batchWidths[] = { 60, 140, 60, 85, 85, 75, 75, 80, 95, 95, 95 };
+        const int totalWidth = 945;
+        for (int column = 0; column < count; ++column) {
+            resultsList_.SetColumnWidth(column, std::max(width, totalWidth) * batchWidths[column] / totalWidth);
+        }
+        return;
+    }
+    if (count != 6) {
+        return;
+    }
     const int singleWidths[] = { 8, 18, 18, 16, 16, 24 };
-    const int* percentages = count == 5 ? batchWidths : singleWidths;
     for (int column = 0; column < count; ++column) {
-        resultsList_.SetColumnWidth(column, width * percentages[column] / 100);
+        resultsList_.SetColumnWidth(column, width * singleWidths[column] / 100);
     }
 }
 
@@ -1225,53 +1246,67 @@ void CLocatorMfcDlg::OnBatchBrowse()
 void CLocatorMfcDlg::setBatchControlsEnabled(bool enabled)
 {
     const int ids[] = { IDC_BATCH_PATH, IDC_BATCH_BROWSE, IDC_BATCH_COUNT,
-                        IDC_BATCH_THREADS, IDC_BATCH_RUN };
+                        IDC_BATCH_THREADS, IDC_BATCH_RUN, IDC_BATCH_FILTER };
     for (int id : ids) {
         GetDlgItem(id)->EnableWindow(enabled);
     }
     GetDlgItem(IDC_BATCH_CANCEL)->EnableWindow(!enabled && batchRunning_);
+    GetDlgItem(IDC_BATCH_EXPORT)->EnableWindow(enabled && batchResults_ && !batchResultData_.empty());
 }
 
 void CLocatorMfcDlg::clearBatchResultDisplay()
 {
+    batchResultData_.clear();
+    displayedBatchResults_.clear();
+    batchFilter_.SetCurSel(0);
     prepareResultList(true);
     setBatchStats(std::vector<CString>(7, CString(L"本次未产生")));
     SetDlgItemText(IDC_BATCH_PROGRESS, L"等待本次执行");
+    GetDlgItem(IDC_BATCH_EXPORT)->EnableWindow(FALSE);
+}
+
+void CLocatorMfcDlg::populateBatchResults()
+{
+    prepareResultList(true);
+    const int selected = std::max(0, batchFilter_.GetCurSel());
+    displayedBatchResults_ = LocatorWorkflow::filterBatchResults(
+        batchResultData_, static_cast<LocatorWorkflow::BatchFilter>(selected));
+    for (const BatchResult& result : displayedBatchResults_) {
+        const int matchCount = std::max(1, static_cast<int>(result.matches.size()));
+        for (int matchIndex = 0; matchIndex < matchCount; ++matchIndex) {
+            const int row = resultsList_.GetItemCount();
+            CString value;
+            value.Format(L"%d", result.id);
+            resultsList_.InsertItem(row, value);
+            resultsList_.SetItemText(row, 1, result.error != LocatorError::Ok
+                ? CString(L"执行错误：") + errorText(result.error)
+                : result.matches.empty() ? CString(L"无匹配") : CString(L"成功"));
+            if (result.matches.empty()) {
+                resultsList_.SetItemText(row, 2, L"-");
+            } else {
+                const LocatorResult& match = result.matches[matchIndex];
+                value.Format(L"%d", matchIndex + 1);
+                resultsList_.SetItemText(row, 2, value);
+                const double fields[] = { match.x, match.y, match.angle, match.scale, match.score };
+                for (int field = 0; field < 5; ++field) {
+                    value.Format(L"%.4f", fields[field]);
+                    resultsList_.SetItemText(row, field + 3, value);
+                }
+            }
+            const double timings[] = { result.preprocessMs, result.searchMs, result.totalMs };
+            for (int field = 0; field < 3; ++field) {
+                value.Format(L"%.3f", timings[field]);
+                resultsList_.SetItemText(row, field + 8, value);
+            }
+        }
+    }
 }
 
 void CLocatorMfcDlg::showBatchResult(const LocatorWorkflow::BatchRun& run)
 {
-    prepareResultList(true);
-    double preprocessSum = 0.0;
-    double searchSum = 0.0;
-    double totalSum = 0.0;
-    int succeeded = 0;
-    int failureRow = 0;
-    std::vector<double> totals;
-    for (const BatchResult& result : run.results) {
-        preprocessSum += result.preprocessMs;
-        searchSum += result.searchMs;
-        totalSum += result.totalMs;
-        totals.push_back(result.totalMs);
-        const bool passed = result.error == LocatorError::Ok && !result.matches.empty();
-        if (passed) {
-            ++succeeded;
-            continue;
-        }
-        CString value;
-        value.Format(L"%d", result.id);
-        const int row = resultsList_.InsertItem(failureRow++, value);
-        resultsList_.SetItemText(row, 1,
-            result.error == LocatorError::Ok ? CString(L"无匹配") : CString(errorText(result.error)));
-        value.Format(L"%.3f", result.preprocessMs);
-        resultsList_.SetItemText(row, 2, value);
-        value.Format(L"%.3f", result.searchMs);
-        resultsList_.SetItemText(row, 3, value);
-        value.Format(L"%.3f", result.totalMs);
-        resultsList_.SetItemText(row, 4, value);
-    }
-    std::sort(totals.begin(), totals.end());
-    const double countValue = static_cast<double>(run.results.size());
+    batchResultData_ = run.results;
+    populateBatchResults();
+    const LocatorWorkflow::BatchSummary summary = LocatorWorkflow::summarizeBatch(run);
     std::vector<CString> statistics;
     CString value;
     value.Format(L"%d / %d", run.completed, run.total);
@@ -1279,7 +1314,7 @@ void CLocatorMfcDlg::showBatchResult(const LocatorWorkflow::BatchRun& run)
     if (run.cancelled) {
         statistics.push_back(L"已取消");
     } else {
-        value.Format(L"%d / %d", succeeded, run.completed - succeeded);
+        value.Format(L"%d / %d / %d", summary.matched, summary.noMatch, summary.errors);
         statistics.push_back(value);
     }
     const auto statistic = [&statistics](double number) {
@@ -1287,10 +1322,10 @@ void CLocatorMfcDlg::showBatchResult(const LocatorWorkflow::BatchRun& run)
         value.Format(L"%.3f ms", number);
         statistics.push_back(value);
     };
-    statistic(countValue > 0.0 ? preprocessSum / countValue : 0.0);
-    statistic(countValue > 0.0 ? searchSum / countValue : 0.0);
-    statistic(countValue > 0.0 ? totalSum / countValue : 0.0);
-    statistic(totals.empty() ? 0.0 : totals[static_cast<size_t>(std::ceil(countValue * 0.99)) - 1]);
+    statistic(summary.preprocessMeanMs);
+    statistic(summary.searchMeanMs);
+    statistic(summary.totalMeanMs);
+    statistic(summary.p99Ms);
     statistic(run.totalMs);
     setBatchStats(statistics);
     CString progress;
@@ -1299,7 +1334,38 @@ void CLocatorMfcDlg::showBatchResult(const LocatorWorkflow::BatchRun& run)
     if (run.cancelled) {
         SetDlgItemText(IDC_STATUS_TEXT, L"批量评估已取消，只保留已完成任务的结果");
     } else {
-        SetDlgItemText(IDC_STATUS_TEXT, L"批量评估完成，下方列表仅显示失败或无匹配任务");
+        SetDlgItemText(IDC_STATUS_TEXT, L"批量评估完成，列表可筛选并导出当前结果");
+    }
+    GetDlgItem(IDC_BATCH_EXPORT)->EnableWindow(!batchResultData_.empty());
+}
+
+void CLocatorMfcDlg::OnBatchFilterChanged()
+{
+    populateBatchResults();
+}
+
+void CLocatorMfcDlg::OnBatchExport()
+{
+    if (batchRunning_ || displayedBatchResults_.empty()) {
+        return;
+    }
+    CFileDialog dialog(FALSE, L"csv", L"batch_results.csv", OFN_OVERWRITEPROMPT,
+                       L"CSV 文件 (*.csv)|*.csv||", this);
+    if (dialog.DoModal() != IDOK) {
+        return;
+    }
+    const CString path = dialog.GetPathName();
+    try {
+        LocatorWorkflow::exportBatchCsv(std::string(CT2A(path.GetString(), CP_ACP)),
+                                       displayedBatchResults_);
+        CString status;
+        status.Format(L"已导出当前筛选的 %d 个任务：%s",
+                      static_cast<int>(displayedBatchResults_.size()), path.GetString());
+        SetDlgItemText(IDC_STATUS_TEXT, status);
+    } catch (const std::exception& error) {
+        const CString message(CA2W(error.what(), CP_UTF8));
+        SetDlgItemText(IDC_STATUS_TEXT, message);
+        AfxMessageBox(message);
     }
 }
 
@@ -1834,7 +1900,8 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
             child->GetWindowRect(&rect);
             ScreenToClient(&rect);
             if (child->GetDlgCtrlID() == IDC_BACKEND ||
-                child->GetDlgCtrlID() == IDC_SUBPIXEL) {
+                child->GetDlgCtrlID() == IDC_SUBPIXEL ||
+                child->GetDlgCtrlID() == IDC_BATCH_FILTER) {
                 COMBOBOXINFO info = { sizeof(COMBOBOXINFO) };
                 if (::GetComboBoxInfo(child->GetSafeHwnd(), &info)) {
                     rect.bottom = rect.top + info.rcItem.bottom + 4;
@@ -1846,7 +1913,12 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
             for (const CRect& previous : visibleRects) {
                 CRect overlap;
                 require(!overlap.IntersectRect(rect, previous),
-                        "可见控件之间存在重叠");
+                        (std::string("可见控件之间存在重叠，ID=") +
+                         std::to_string(child->GetDlgCtrlID()) + "，矩形=" +
+                         std::to_string(rect.left) + "," + std::to_string(rect.top) + "," +
+                         std::to_string(rect.right) + "," + std::to_string(rect.bottom) + "，已有=" +
+                         std::to_string(previous.left) + "," + std::to_string(previous.top) + "," +
+                         std::to_string(previous.right) + "," + std::to_string(previous.bottom)).c_str());
             }
             visibleRects.push_back(rect);
             const int id = child->GetDlgCtrlID();
@@ -2261,8 +2333,35 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     };
     waitBatch();
     require(batchStats_.GetItemText(0, 1) == L"197 / 197" &&
-            batchStats_.GetItemText(1, 1) == L"197 / 0",
-            "对话框批量评估未通过 197 对数据");
+            batchStats_.GetItemText(1, 1) == L"197 / 0 / 0",
+            "对话框批量三态统计不正确");
+    CComboBox* filter = static_cast<CComboBox*>(GetDlgItem(IDC_BATCH_FILTER));
+    int successRows = 0;
+    for (const BatchResult& result : batchResultData_) {
+        if (result.error == LocatorError::Ok && !result.matches.empty()) {
+            successRows += static_cast<int>(result.matches.size());
+        }
+    }
+    require(filter != nullptr && resultsList_.GetItemCount() == successRows,
+            (std::string("批量全部结果数量错误，实际=") +
+             std::to_string(resultsList_.GetItemCount()) + "，缓存=" +
+             std::to_string(batchResultData_.size()) + "，预期行=" +
+             std::to_string(successRows)).c_str());
+    const int filterCounts[] = { successRows, successRows, 0, 0 };
+    for (int index = 0; index < 4; ++index) {
+        filter->SetCurSel(index);
+        SendMessage(WM_COMMAND, MAKEWPARAM(IDC_BATCH_FILTER, CBN_SELCHANGE),
+                    reinterpret_cast<LPARAM>(filter->GetSafeHwnd()));
+        require(resultsList_.GetItemCount() == filterCounts[index],
+                "批量结果筛选与实际分类不一致");
+    }
+    filter->SetCurSel(0);
+    SendMessage(WM_COMMAND, MAKEWPARAM(IDC_BATCH_FILTER, CBN_SELCHANGE),
+                reinterpret_cast<LPARAM>(filter->GetSafeHwnd()));
+    require(resultsList_.GetItemCount() == successRows, "恢复全部筛选后结果数量错误");
+    require(GetDlgItem(IDC_BATCH_EXPORT) != nullptr &&
+            GetDlgItem(IDC_BATCH_EXPORT)->IsWindowEnabled(),
+            "批量完成后未提供结果导出");
     if (previewPath != nullptr && *previewPath != L'\0') {
         showInspectorPage(1);
         const std::wstring batchPreview = std::wstring(previewPath) + L".batch.png";

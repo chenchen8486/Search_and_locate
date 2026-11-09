@@ -5,6 +5,9 @@
 #include <opencv2/core.hpp>
 
 #include <atomic>
+#include <cstdio>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <vector>
 
@@ -33,6 +36,43 @@ void testMfcWorkflowBatchTiming()
         expect(result.error == LocatorError::Ok && result.matches.size() == 1,
                "MFC 工作流批量任务 " + std::to_string(result.id) + " 失败");
     }
+}
+
+void testMfcWorkflowBatchReport()
+{
+    LocatorWorkflow::BatchRun run;
+    run.total = 3;
+    run.completed = 3;
+    run.totalMs = 8.0;
+    run.results.resize(3);
+    for (int index = 0; index < 3; ++index) {
+        run.results[index].id = index;
+        run.results[index].error = LocatorError::Ok;
+        run.results[index].preprocessMs = 0.25;
+        run.results[index].searchMs = 0.75;
+        run.results[index].totalMs = index + 1.0;
+    }
+    run.results[0].matches.push_back(LocatorResult{ 1.25, 2.5, 3.0, 1.0, 98.75 });
+    run.results[2].error = LocatorError::InvalidImage;
+    const LocatorWorkflow::BatchSummary summary = LocatorWorkflow::summarizeBatch(run);
+    expect(summary.matched == 1 && summary.noMatch == 1 && summary.errors == 1,
+           "批量成功、无匹配和执行错误分类错误");
+    expectNear(summary.totalMeanMs, 2.0, 1e-12, "批量整体均值错误");
+    expectNear(summary.p99Ms, 3.0, 1e-12, "批量 P99 错误");
+    expect(LocatorWorkflow::filterBatchResults(run.results, LocatorWorkflow::BatchFilter::Matched).size() == 1 &&
+           LocatorWorkflow::filterBatchResults(run.results, LocatorWorkflow::BatchFilter::NoMatch).size() == 1 &&
+           LocatorWorkflow::filterBatchResults(run.results, LocatorWorkflow::BatchFilter::Error).size() == 1,
+           "批量结果筛选错误");
+
+    const std::string path = "temp/t33_batch_results.csv";
+    LocatorWorkflow::exportBatchCsv(path, run.results);
+    std::ifstream input(path, std::ios::binary);
+    const std::string csv((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+    expect(csv.find("\xEF\xBB\xBF") == 0 && csv.find("0,成功,1,1.2500,2.5000,3.0000") != std::string::npos &&
+           csv.find("1,无匹配") != std::string::npos &&
+           csv.find("2,执行错误") != std::string::npos,
+           "CSV 导出未保留任务状态、匹配字段或 UTF-8 BOM");
+    std::remove(path.c_str());
 }
 
 void testMfcWorkflowBatchCancellation()

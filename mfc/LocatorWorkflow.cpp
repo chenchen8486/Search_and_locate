@@ -1,7 +1,11 @@
 #include "LocatorWorkflow.h"
 #include "BatchControl.h"
 
+#include <algorithm>
 #include <chrono>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
 
 namespace LocatorWorkflow {
 namespace {
@@ -94,6 +98,82 @@ BatchRun runBatchControlled(const std::vector<BatchTask>& tasks, int threads,
     run.totalMs = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - start).count();
     return run;
+}
+
+BatchSummary summarizeBatch(const BatchRun& run)
+{
+    BatchSummary summary;
+    double total = 0.0;
+    std::vector<double> totals;
+    for (const BatchResult& result : run.results) {
+        if (result.error != LocatorError::Ok) {
+            ++summary.errors;
+        } else if (result.matches.empty()) {
+            ++summary.noMatch;
+        } else {
+            ++summary.matched;
+        }
+        summary.preprocessMeanMs += result.preprocessMs;
+        summary.searchMeanMs += result.searchMs;
+        total += result.totalMs;
+        totals.push_back(result.totalMs);
+    }
+    if (!run.results.empty()) {
+        const double count = static_cast<double>(run.results.size());
+        summary.preprocessMeanMs /= count;
+        summary.searchMeanMs /= count;
+        summary.totalMeanMs = total / count;
+        std::sort(totals.begin(), totals.end());
+        summary.p99Ms = totals[static_cast<size_t>(std::ceil(count * 0.99)) - 1];
+    }
+    return summary;
+}
+
+std::vector<BatchResult> filterBatchResults(const std::vector<BatchResult>& results,
+                                            BatchFilter filter)
+{
+    std::vector<BatchResult> filtered;
+    for (const BatchResult& result : results) {
+        const bool matches = result.error == LocatorError::Ok && !result.matches.empty();
+        const bool noMatch = result.error == LocatorError::Ok && result.matches.empty();
+        if (filter == BatchFilter::All ||
+            (filter == BatchFilter::Matched && matches) ||
+            (filter == BatchFilter::NoMatch && noMatch) ||
+            (filter == BatchFilter::Error && result.error != LocatorError::Ok)) {
+            filtered.push_back(result);
+        }
+    }
+    return filtered;
+}
+
+void exportBatchCsv(const std::string& path, const std::vector<BatchResult>& results)
+{
+    std::ofstream output(path, std::ios::binary | std::ios::trunc);
+    if (!output.good()) {
+        throw std::runtime_error("无法创建 CSV 文件：" + path);
+    }
+    output << "\xEF\xBB\xBF";
+    output << "任务编号,状态,匹配序号,x,y,angle,scale,score,预处理ms,搜索ms,整体ms\r\n";
+    output << std::fixed << std::setprecision(4);
+    for (const BatchResult& result : results) {
+        const char* statusUtf8 = result.error != LocatorError::Ok ? "执行错误" :
+                                 result.matches.empty() ? "无匹配" : "成功";
+        if (result.matches.empty()) {
+            output << result.id << ',' << statusUtf8 << ",,,,,,,"
+                   << result.preprocessMs << ',' << result.searchMs << ',' << result.totalMs << "\r\n";
+            continue;
+        }
+        for (size_t index = 0; index < result.matches.size(); ++index) {
+            const LocatorResult& match = result.matches[index];
+            output << result.id << ',' << statusUtf8 << ',' << index + 1 << ','
+                   << match.x << ',' << match.y << ',' << match.angle << ',' << match.scale << ','
+                   << match.score << ',' << result.preprocessMs << ',' << result.searchMs << ','
+                   << result.totalMs << "\r\n";
+        }
+    }
+    if (!output.good()) {
+        throw std::runtime_error("CSV 写入失败：" + path);
+    }
 }
 
 } // namespace LocatorWorkflow
