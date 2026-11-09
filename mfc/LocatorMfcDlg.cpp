@@ -895,7 +895,9 @@ void CLocatorMfcDlg::showError(LocatorError error)
 {
     const CString message = errorText(error);
     SetDlgItemText(IDC_STATUS_TEXT, message);
-    AfxMessageBox(message);
+    if (IsWindowVisible()) {
+        AfxMessageBox(message);
+    }
 }
 
 void CLocatorMfcDlg::setSingleControlsEnabled(bool enabled)
@@ -918,6 +920,7 @@ void CLocatorMfcDlg::OnExecute()
     if (singleRunning_) {
         return;
     }
+    clearResultDisplay();
     if (searchImage_.empty() || modelImage_.empty()) {
         SetDlgItemText(IDC_STATUS_TEXT, L"请先加载搜索图和模板");
         return;
@@ -956,6 +959,7 @@ void CLocatorMfcDlg::OnExecute()
 void CLocatorMfcDlg::showSingleResult(const LocatorWorkflow::SingleResult& run)
 {
     if (run.error != LocatorError::Ok) {
+        clearResultDisplay();
         showError(run.error);
         return;
     }
@@ -1648,16 +1652,19 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
             "单次搜索期间未限制重复搜索、加载和复位");
     showInspectorPage(1);
     showInspectorPage(0);
-    const DWORD waitStart = GetTickCount();
-    while (!GetDlgItem(IDC_EXECUTE)->IsWindowEnabled()) {
-        require(GetTickCount() - waitStart < 30000, "等待单次后台搜索超时");
-        MSG message;
-        while (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE)) {
-            TranslateMessage(&message);
-            DispatchMessage(&message);
+    const auto waitSingle = [this, &require] {
+        const DWORD waitStart = GetTickCount();
+        while (!GetDlgItem(IDC_EXECUTE)->IsWindowEnabled()) {
+            require(GetTickCount() - waitStart < 30000, "等待单次后台搜索超时");
+            MSG message;
+            while (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE)) {
+                TranslateMessage(&message);
+                DispatchMessage(&message);
+            }
+            Sleep(1);
         }
-        Sleep(1);
-    }
+    };
+    waitSingle();
     require(resultsList_.GetItemCount() == static_cast<int>(expected.matches.size()) &&
             searchView_.hasResults(), "对话框单次结果数量或叠加数据与核心不一致");
     if (resultsList_.GetItemText(0, 0) != expectedFields[0] ||
@@ -1671,6 +1678,23 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
         throw std::runtime_error("对话框单次结果实际为：" +
                                  std::string(CT2A(actual.GetString(), CP_UTF8)));
     }
+
+    SetDlgItemText(IDC_ANGLE_MIN, L"非法值");
+    OnExecute();
+    require(resultsList_.GetItemCount() == 0 && !searchView_.hasResults(),
+            "参数格式错误后仍显示上一次成功结果");
+    SetDlgItemText(IDC_ANGLE_MIN, L"-2");
+    roi_ = { 0, 0, 1, 1 };
+    useRoi_ = true;
+    OnExecute();
+    waitSingle();
+    require(resultsList_.GetItemCount() == 0 && !searchView_.hasResults(),
+            "核心执行失败后仍显示上一次成功结果");
+    roi_ = { 10, 10, 100, 100 };
+    OnExecute();
+    waitSingle();
+    require(resultsList_.GetItemCount() == static_cast<int>(expected.matches.size()),
+            "恢复有效配置后不能重新执行搜索");
 
     CRect originalWindow;
     GetWindowRect(&originalWindow);
