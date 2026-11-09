@@ -24,6 +24,9 @@ void testMfcWorkflowBatchTiming();
 void testMfcWorkflowBatchCancellation();
 void testMfcWorkflowBatchReport();
 void testMfcWorkflowFixedBenchmark();
+void testMfcWorkflowDirectoryHints();
+void testMfcWorkflowDirectoryRoots();
+void testMfcWorkflowDirectoryMemory();
 void testRoiRestrictsSearch();
 void testRoiInvalidRejected();
 void testTopNScoreAndStableOrder();
@@ -202,7 +205,10 @@ const TestCase tests[] = {
     { "MfcWorkflow.BatchTiming", testMfcWorkflowBatchTiming },
     { "MfcWorkflow.BatchCancellation", testMfcWorkflowBatchCancellation },
     { "MfcWorkflow.BatchReport", testMfcWorkflowBatchReport },
-    { "MfcWorkflow.FixedBenchmark", testMfcWorkflowFixedBenchmark }
+    { "MfcWorkflow.FixedBenchmark", testMfcWorkflowFixedBenchmark },
+    { "MfcWorkflow.DirectoryHints", testMfcWorkflowDirectoryHints },
+    { "MfcWorkflow.DirectoryRoots", testMfcWorkflowDirectoryRoots },
+    { "MfcWorkflow.DirectoryMemory", testMfcWorkflowDirectoryMemory }
 };
 
 bool isCoreTest(const std::string& name)

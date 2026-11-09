@@ -4,6 +4,7 @@
 
 #include <opencv2/core.hpp>
 
+#include <windows.h>
 #include <algorithm>
 #include <atomic>
 #include <cstdio>
@@ -74,6 +75,62 @@ void testMfcWorkflowBatchReport()
            csv.find("2,执行错误") != std::string::npos,
            "CSV 导出未保留任务状态、匹配字段或 UTF-8 BOM");
     std::remove(path.c_str());
+}
+
+void testMfcWorkflowDirectoryHints()
+{
+    const std::string all = LocatorWorkflow::formatBatchDataHint(197, 0);
+    expect(all.find("197") != std::string::npos && all.find("全部") != std::string::npos,
+           "目录扫描后未显示实际配对数和全部任务口径");
+    const std::string reused = LocatorWorkflow::formatBatchDataHint(197, 500);
+    expect(reused.find("197") != std::string::npos && reused.find("500") != std::string::npos &&
+           reused.find("循环复用") != std::string::npos,
+           "500 任务未说明 197 对图像的循环复用");
+    const std::string partial = LocatorWorkflow::formatBatchDataHint(197, 12);
+    expect(partial.find("12") != std::string::npos && partial.find("循环复用") == std::string::npos,
+           "任务数不大于配对数时不应提示循环复用");
+}
+
+void testMfcWorkflowDirectoryRoots()
+{
+    wchar_t expectedBuffer[MAX_PATH] = {};
+    expect(GetFullPathNameW(L".", MAX_PATH, expectedBuffer, nullptr) > 0,
+           "无法取得目录解析测试的工程根");
+    const std::wstring expectedRoot(expectedBuffer);
+    const std::wstring root = LocatorWorkflow::projectDirectory();
+    expect(root == expectedRoot, "标准 Release 没有按程序位置识别当前工程根");
+    expect(LocatorWorkflow::resolveBatchDirectory(L".", root) == expectedRoot,
+           "首次目录没有定位到当前工程根");
+    expect(LocatorWorkflow::resolveBatchDirectory(L"test_data\\Search", root) ==
+           expectedRoot + L"\\test_data\\Search", "相对批量目录没有按工程根解析");
+    expect(LocatorWorkflow::resolveBatchDirectory(expectedRoot, root) == expectedRoot,
+           "已有绝对目录被错误地再次拼接工程根");
+    expect(LocatorWorkflow::resolveBatchDirectory(L"temp\\t38_不存在的目录", root).empty(),
+           "无效目录不应作为初始选择");
+}
+
+void testMfcWorkflowDirectoryMemory()
+{
+    const std::wstring root = LocatorWorkflow::projectDirectory();
+    const std::wstring settings = root + L"\\temp\\t38_directory_memory.ini";
+    const std::wstring remembered = root + L"\\test_data\\Search";
+    DeleteFileW(settings.c_str());
+    expect(LocatorWorkflow::readBatchDirectoryMemory(settings).empty(),
+           "不存在的配置不应产生目录记忆");
+    expect(LocatorWorkflow::writeBatchDirectoryMemory(settings, remembered),
+           "无法保存已选择的有效目录");
+    expect(LocatorWorkflow::readBatchDirectoryMemory(settings) == remembered,
+           "重新读取的目录与上次选择不一致");
+    expect(LocatorWorkflow::writeBatchDirectoryMemory(settings, root) &&
+           LocatorWorkflow::readBatchDirectoryMemory(settings) == root,
+           "再次选择没有覆盖旧目录记忆");
+    WritePrivateProfileStringW(L"Batch", L"LastDirectory", L"temp\\t38_不存在的目录",
+                               settings.c_str());
+    expect(LocatorWorkflow::readBatchDirectoryMemory(settings).empty(),
+           "失效或相对路径记忆没有回退");
+    expect(!LocatorWorkflow::writeBatchDirectoryMemory(settings, L"temp\\t38_不存在的目录"),
+           "不应保存不存在的目录");
+    DeleteFileW(settings.c_str());
 }
 
 void testMfcWorkflowFixedBenchmark()

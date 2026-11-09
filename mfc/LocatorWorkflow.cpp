@@ -7,7 +7,88 @@
 #include <iomanip>
 #include <sstream>
 
+#include <windows.h>
+
 namespace LocatorWorkflow {
+namespace {
+
+std::wstring moduleDirectory()
+{
+    wchar_t path[MAX_PATH] = {};
+    const DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) {
+        return std::wstring();
+    }
+    std::wstring directory(path, length);
+    const size_t separator = directory.find_last_of(L"\\/");
+    return separator == std::wstring::npos ? std::wstring() : directory.substr(0, separator);
+}
+
+bool isDirectory(const std::wstring& path)
+{
+    if (path.empty()) {
+        return false;
+    }
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+}
+
+} // namespace
+
+std::wstring projectDirectory()
+{
+    std::wstring root = moduleDirectory();
+    for (int level = 0; level < 3 && !root.empty(); ++level) {
+        const size_t separator = root.find_last_of(L"\\/");
+        root = separator == std::wstring::npos ? std::wstring() : root.substr(0, separator);
+    }
+    if (GetFileAttributesW((root + L"\\Locator.sln").c_str()) != INVALID_FILE_ATTRIBUTES) {
+        return root;
+    }
+    wchar_t current[MAX_PATH] = {};
+    const DWORD length = GetCurrentDirectoryW(MAX_PATH, current);
+    return length > 0 && length < MAX_PATH ? std::wstring(current, length) : std::wstring();
+}
+
+std::wstring batchDirectorySettingsPath()
+{
+    const std::wstring directory = moduleDirectory();
+    return directory.empty() ? std::wstring() : directory + L"\\LocatorMfc.ini";
+}
+
+std::wstring resolveBatchDirectory(const std::wstring& input, const std::wstring& projectRoot)
+{
+    const std::wstring requested = input.empty() ? L"." : input;
+    const bool isAbsolute = (requested.size() > 1 && requested[1] == L':') ||
+                            requested[0] == L'\\' || requested[0] == L'/';
+    const std::wstring combined = isAbsolute ? requested : projectRoot + L"\\" + requested;
+    wchar_t absolute[MAX_PATH] = {};
+    if (GetFullPathNameW(combined.c_str(), MAX_PATH, absolute, nullptr) == 0 ||
+        !isDirectory(absolute)) {
+        return std::wstring();
+    }
+    return absolute;
+}
+
+std::wstring readBatchDirectoryMemory(const std::wstring& settingsPath)
+{
+    wchar_t remembered[MAX_PATH] = {};
+    GetPrivateProfileStringW(L"Batch", L"LastDirectory", L"", remembered, MAX_PATH,
+                             settingsPath.c_str());
+    if ((remembered[0] != L'\\' &&
+         (remembered[0] == L'\0' || remembered[1] != L':')) || !isDirectory(remembered)) {
+        return std::wstring();
+    }
+    return remembered;
+}
+
+bool writeBatchDirectoryMemory(const std::wstring& settingsPath, const std::wstring& directory)
+{
+    return !settingsPath.empty() && isDirectory(directory) &&
+           WritePrivateProfileStringW(L"Batch", L"LastDirectory", directory.c_str(),
+                                      settingsPath.c_str()) != FALSE;
+}
+
 namespace {
 
 LocatorImage asLocatorImage(const cv::Mat& image)
@@ -151,6 +232,24 @@ void exportBenchmarkCsv(const std::string& path, const BenchmarkRun& run)
     if (!output.good()) {
         throw std::runtime_error("固定基准 CSV 写入失败：" + path);
     }
+}
+
+std::string formatBatchDataHint(int pairCount, int requestedCount)
+{
+    if (pairCount < 0 || requestedCount < 0) {
+        throw std::invalid_argument("配对数和任务数不能为负数");
+    }
+    const int actual = requestedCount == 0 ? pairCount : requestedCount;
+    std::ostringstream text;
+    text << "已扫描 " << pairCount << " 对；";
+    if (requestedCount > pairCount) {
+        text << actual << " 个任务按编号循环复用";
+    } else if (requestedCount == 0) {
+        text << "本次执行全部 " << actual << " 对";
+    } else {
+        text << "本次执行 " << actual << " 个任务";
+    }
+    return text.str();
 }
 
 BatchSummary summarizeBatch(const BatchRun& run)

@@ -64,6 +64,13 @@ std::vector<BatchResult> filterBatchResults(const std::vector<BatchResult>& resu
                                             BatchFilter filter);
 void exportBatchCsv(const std::string& path, const std::vector<BatchResult>& results);
 
+std::string formatBatchDataHint(int pairCount, int requestedCount);
+std::wstring projectDirectory();
+std::wstring batchDirectorySettingsPath();
+std::wstring resolveBatchDirectory(const std::wstring& input, const std::wstring& projectRoot);
+std::wstring readBatchDirectoryMemory(const std::wstring& settingsPath);
+bool writeBatchDirectoryMemory(const std::wstring& settingsPath, const std::wstring& directory);
+
 SingleResult protectSingle(const std::function<SingleResult()>& action);
 SingleResult runSingle(const cv::Mat& model, const cv::Mat& search,
                        const LocatorConfig& config);

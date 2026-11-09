@@ -8,12 +8,19 @@
 #include <afxdlgs.h>
 #include <atlconv.h>
 #include <atlimage.h>
+#include <ole2.h>
+#include <shlobj.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
 #include <stdexcept>
 #include <string>
+
+struct BatchReviewData {
+    std::vector<ThickPair> pairs;
+    BatchDataSet data;
+};
 
 namespace {
 
@@ -27,6 +34,7 @@ struct SingleCompletion {
 
 constexpr UINT WM_LOCATOR_BATCH_PROGRESS = WM_APP + 205;
 constexpr UINT WM_LOCATOR_BATCH_COMPLETE = WM_APP + 206;
+constexpr UINT WM_LOCATOR_DIRECTORY_SCANNED = WM_APP + 207;
 
 struct BatchProgressData {
     int completed = 0;
@@ -36,23 +44,73 @@ struct BatchProgressData {
 struct BatchCompletion {
     unsigned generation = 0;
     LocatorWorkflow::BatchRun run;
+    std::shared_ptr<BatchReviewData> review;
 };
 
-int dividerPaintCount = 0;
+int groupPaintCount = 0;
+int groupEraseCount = 0;
 int imagePaintCount = 0;
 
 LRESULT CALLBACK countControlPaint(HWND window, UINT message, WPARAM wParam,
                                    LPARAM lParam, UINT_PTR, DWORD_PTR)
 {
+    if (message == WM_ERASEBKGND && ::GetDlgCtrlID(window) == IDC_ANGLE_TITLE) {
+        ++groupEraseCount;
+    }
     if (message == WM_PAINT) {
         const int id = ::GetDlgCtrlID(window);
-        if (id == IDC_DIVIDER_ANGLE) {
-            ++dividerPaintCount;
+        if (id == IDC_ANGLE_TITLE) {
+            ++groupPaintCount;
         } else if (id == IDC_SEARCH_VIEW) {
             ++imagePaintCount;
         }
     }
     return DefSubclassProc(window, message, wParam, lParam);
+}
+
+LRESULT CALLBACK groupBackgroundProc(HWND window, UINT message, WPARAM wParam,
+                                     LPARAM lParam, UINT_PTR, DWORD_PTR)
+{
+    if (message == WM_ERASEBKGND) {
+        RECT client = {};
+        GetClientRect(window, &client);
+        FillRect(reinterpret_cast<HDC>(wParam), &client,
+                 static_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+        return TRUE;
+    }
+    return DefSubclassProc(window, message, wParam, lParam);
+}
+
+LRESULT CALLBACK editFrameProc(HWND window, UINT message, WPARAM wParam,
+                               LPARAM lParam, UINT_PTR, DWORD_PTR)
+{
+    const LRESULT result = DefSubclassProc(window, message, wParam, lParam);
+    if (message == WM_NCPAINT) {
+        RECT rect = {};
+        GetWindowRect(window, &rect);
+        OffsetRect(&rect, -rect.left, -rect.top);
+        HDC dc = GetWindowDC(window);
+        if (dc != nullptr) {
+            HBRUSH border = CreateSolidBrush(RGB(143, 155, 168));
+            FrameRect(dc, &rect, border);
+            DeleteObject(border);
+            ReleaseDC(window, dc);
+        }
+    }
+    return result;
+}
+
+void redrawInputFrames(CWnd* dialog)
+{
+    for (CWnd* child = dialog->GetWindow(GW_CHILD); child != nullptr;
+         child = child->GetNextWindow()) {
+        wchar_t className[16] = {};
+        GetClassNameW(child->GetSafeHwnd(), className, 16);
+        if (std::wcscmp(className, L"Edit") == 0) {
+            child->RedrawWindow(nullptr, nullptr,
+                                RDW_INVALIDATE | RDW_FRAME | RDW_UPDATENOW);
+        }
+    }
 }
 
 bool readDouble(CWnd* window, int id, double& value)
@@ -112,17 +170,14 @@ BEGIN_MESSAGE_MAP(CLocatorMfcDlg, CDialogEx)
     ON_BN_CLICKED(IDC_LOAD_TEMPLATE, &CLocatorMfcDlg::OnLoadTemplate)
     ON_BN_CLICKED(IDC_SELECT_ROI, &CLocatorMfcDlg::OnSelectRoi)
     ON_BN_CLICKED(IDC_CLEAR_ROI, &CLocatorMfcDlg::OnClearRoi)
-    ON_BN_CLICKED(IDC_APPLY_ROI, &CLocatorMfcDlg::OnApplyRoi)
     ON_BN_CLICKED(IDC_RESET, &CLocatorMfcDlg::OnReset)
     ON_BN_CLICKED(IDC_EXECUTE, &CLocatorMfcDlg::OnExecute)
     ON_BN_CLICKED(IDC_BATCH_BROWSE, &CLocatorMfcDlg::OnBatchBrowse)
     ON_BN_CLICKED(IDC_BATCH_RUN, &CLocatorMfcDlg::OnBatchRun)
     ON_BN_CLICKED(IDC_BATCH_CANCEL, &CLocatorMfcDlg::OnBatchCancel)
-    ON_BN_CLICKED(IDC_BATCH_EXPORT, &CLocatorMfcDlg::OnBatchExport)
-    ON_BN_CLICKED(IDC_BATCH_BENCHMARK, &CLocatorMfcDlg::OnBatchBenchmark)
-    ON_BN_CLICKED(IDC_BENCHMARK_EXPORT, &CLocatorMfcDlg::OnBenchmarkExport)
     ON_CBN_SELCHANGE(IDC_BATCH_FILTER, &CLocatorMfcDlg::OnBatchFilterChanged)
     ON_CONTROL_RANGE(EN_CHANGE, IDC_ANGLE_MIN, IDC_Y_VICINITY, &CLocatorMfcDlg::OnParameterChanged)
+    ON_CONTROL_RANGE(EN_CHANGE, IDC_BATCH_PATH, IDC_BATCH_THREADS, &CLocatorMfcDlg::OnParameterChanged)
     ON_CBN_SELCHANGE(IDC_BACKEND, &CLocatorMfcDlg::OnChoiceChanged)
     ON_CBN_SELCHANGE(IDC_SUBPIXEL, &CLocatorMfcDlg::OnChoiceChanged)
     ON_NOTIFY(TCN_SELCHANGE, IDC_MODE_TABS, &CLocatorMfcDlg::OnModeTabsChanged)
@@ -133,6 +188,7 @@ BEGIN_MESSAGE_MAP(CLocatorMfcDlg, CDialogEx)
     ON_MESSAGE(WM_LOCATOR_SINGLE_COMPLETE, &CLocatorMfcDlg::OnSingleComplete)
     ON_MESSAGE(WM_LOCATOR_BATCH_PROGRESS, &CLocatorMfcDlg::OnBatchProgress)
     ON_MESSAGE(WM_LOCATOR_BATCH_COMPLETE, &CLocatorMfcDlg::OnBatchComplete)
+    ON_MESSAGE(WM_LOCATOR_DIRECTORY_SCANNED, &CLocatorMfcDlg::OnDirectoryScanned)
     ON_WM_DESTROY()
     ON_WM_PAINT()
     ON_WM_ERASEBKGND()
@@ -169,6 +225,13 @@ BOOL CLocatorMfcDlg::OnInitDialog()
     for (int id : sectionIds) {
         GetDlgItem(id)->SetFont(&sectionFont_);
     }
+    const int groupIds[] = {
+        IDC_ANGLE_TITLE, IDC_SCALE_TITLE, IDC_RESULT_OPTIONS_TITLE,
+        IDC_BATCH_DIRECTORY_TITLE, IDC_BATCH_SETTINGS_TITLE, IDC_BATCH_STATS_TITLE
+    };
+    for (int id : groupIds) {
+        SetWindowSubclass(GetDlgItem(id)->GetSafeHwnd(), groupBackgroundProc, 1, 0);
+    }
 
     searchView_.SubclassDlgItem(IDC_SEARCH_VIEW, this);
     templateView_.SubclassDlgItem(IDC_TEMPLATE_VIEW, this);
@@ -199,11 +262,18 @@ BOOL CLocatorMfcDlg::OnInitDialog()
         IDC_ANGLE_MIN, IDC_ANGLE_MAX, IDC_ANGLE_STEP, IDC_SCALE_MIN, IDC_SCALE_MAX,
         IDC_SCALE_STEP, IDC_PYRAMID, IDC_MIN_SCORE, IDC_MAX_RESULTS,
         IDC_X_VICINITY, IDC_Y_VICINITY, IDC_BATCH_COUNT, IDC_BATCH_THREADS,
-        IDC_ROI_X, IDC_ROI_Y, IDC_ROI_WIDTH, IDC_ROI_HEIGHT, IDC_BACKEND, IDC_SUBPIXEL, IDC_BATCH_FILTER
+        IDC_BACKEND, IDC_SUBPIXEL, IDC_BATCH_FILTER
     };
     for (int id : numericIds) {
-        GetDlgItem(id)->SetFont(&numericFont_);
+        CWnd* input = GetDlgItem(id);
+        input->SetFont(&numericFont_);
+        wchar_t className[16] = {};
+        GetClassNameW(input->GetSafeHwnd(), className, 16);
+        if (std::wcscmp(className, L"Edit") == 0) {
+            SetWindowSubclass(input->GetSafeHwnd(), editFrameProc, 2, 0);
+        }
     }
+    SetWindowSubclass(GetDlgItem(IDC_BATCH_PATH)->GetSafeHwnd(), editFrameProc, 2, 0);
     modeTabs_.SubclassDlgItem(IDC_MODE_TABS, this);
     TCITEM tab = {};
     tab.mask = TCIF_TEXT;
@@ -226,7 +296,10 @@ BOOL CLocatorMfcDlg::OnInitDialog()
     SetDlgItemText(IDC_Y_VICINITY, L"0");
     SetDlgItemText(IDC_BATCH_COUNT, L"0");
     SetDlgItemText(IDC_BATCH_THREADS, L"20");
-    SetDlgItemText(IDC_BATCH_PATH, L"");
+    const std::wstring remembered = LocatorWorkflow::readBatchDirectoryMemory(
+        LocatorWorkflow::batchDirectorySettingsPath());
+    SetDlgItemText(IDC_BATCH_PATH, remembered.empty() ? L"." : remembered.c_str());
+    SetDlgItemText(IDC_BATCH_DIRECTORY_LABEL, L"首次定位工程根，之后记住上次选择");
     SetDlgItemText(IDC_SEARCH_PATH, L"未加载搜索图");
     SetDlgItemText(IDC_TEMPLATE_PATH, L"未加载模板");
     SetDlgItemText(IDC_STATUS_TEXT, L"就绪：请加载搜索图和模板");
@@ -245,13 +318,13 @@ void CLocatorMfcDlg::showInspectorPage(int page)
     const int searchIds[] = {
         IDC_PARAMETER_HINT, IDC_ANGLE_TITLE, IDC_ANGLE_HINT, IDC_ANGLE_MIN_LABEL,
         IDC_ANGLE_MAX_LABEL, IDC_ANGLE_STEP_LABEL, IDC_ANGLE_MIN, IDC_ANGLE_MAX,
-        IDC_ANGLE_STEP, IDC_DIVIDER_ANGLE, IDC_SCALE_TITLE, IDC_SCALE_HINT,
+        IDC_ANGLE_STEP, IDC_SCALE_TITLE, IDC_SCALE_HINT,
         IDC_SCALE_MIN_LABEL, IDC_SCALE_MAX_LABEL, IDC_SCALE_STEP_LABEL, IDC_SCALE_MIN,
-        IDC_SCALE_MAX, IDC_SCALE_STEP, IDC_DIVIDER_SCALE, IDC_RESULT_OPTIONS_TITLE,
+        IDC_SCALE_MAX, IDC_SCALE_STEP, IDC_RESULT_OPTIONS_TITLE,
         IDC_PRECISION_HINT, IDC_PYRAMID_LABEL, IDC_SUBPIXEL_LABEL, IDC_MIN_SCORE_LABEL,
         IDC_PYRAMID, IDC_SUBPIXEL, IDC_MIN_SCORE, IDC_MAX_RESULTS_LABEL,
         IDC_X_VICINITY_LABEL, IDC_Y_VICINITY_LABEL, IDC_MAX_RESULTS, IDC_X_VICINITY,
-        IDC_Y_VICINITY, IDC_DIVIDER_RESULT_OPTIONS, IDC_EXECUTION_HINT, IDC_EXECUTE
+        IDC_Y_VICINITY, IDC_EXECUTION_HINT, IDC_EXECUTE
     };
     const int batchIds[] = {
         IDC_BATCH_DIRECTORY_TITLE, IDC_BATCH_DIRECTORY_LABEL, IDC_BATCH_PATH,
@@ -272,6 +345,7 @@ void CLocatorMfcDlg::showInspectorPage(int page)
         modeTabs_.SetCurSel(page);
     }
     modeTabs_.RedrawWindow();
+    redrawInputFrames(this);
 }
 
 void CLocatorMfcDlg::OnModeTabsChanged(NMHDR* header, LRESULT* result)
@@ -281,14 +355,14 @@ void CLocatorMfcDlg::OnModeTabsChanged(NMHDR* header, LRESULT* result)
     *result = 0;
 }
 
-void CLocatorMfcDlg::setBatchStats(const std::vector<CString>& values, bool benchmark)
+void CLocatorMfcDlg::setBatchStats(const std::vector<CString>& values)
 {
     if (values.size() != 7) {
         throw std::invalid_argument("批量统计必须有七项");
     }
     const wchar_t* labels[] = {
         L"总任务数", L"成功 / 无匹配 / 错误", L"预处理均值", L"搜索均值",
-        L"整体均值", L"P99", benchmark ? L"50 轮中位数" : L"总耗时"
+        L"整体均值", L"P99", L"总耗时"
     };
     batchStats_.DeleteAllItems();
     for (int row = 0; row < 7; ++row) {
@@ -388,31 +462,10 @@ void CLocatorMfcDlg::applyLayout()
     place(IDC_TEMPLATE_PATH, box(templateX, pathY, templateWidth, sy(18)));
 
     place(IDC_RESULTS_TITLE, box(results.left + sx(12), results.top + sy(10), sx(90), sy(20)));
-    const int exportWidth = sx(116);
-    const int benchmarkWidth = sx(96);
-    const int rawExportWidth = sx(116);
-    const int exportX = results.right - sx(12) - exportWidth;
-    const int benchmarkX = exportX - sx(8) - benchmarkWidth;
     place(IDC_RESULT_HINT, box(results.left + sx(112), results.top + sy(12),
-        results.Width() - sx(124) - rawExportWidth - benchmarkWidth - exportWidth - sx(24), sy(18)));
-    place(IDC_BENCHMARK_EXPORT, box(benchmarkX - sx(8) - rawExportWidth,
-        results.top + sy(8), rawExportWidth, sy(24)));
-    place(IDC_BATCH_BENCHMARK, box(benchmarkX, results.top + sy(8), benchmarkWidth, sy(24)));
-    place(IDC_BATCH_EXPORT, box(exportX, results.top + sy(8), exportWidth, sy(24)));
-    const int roiLabels[] = { IDC_ROI_X_LABEL, IDC_ROI_Y_LABEL, IDC_ROI_WIDTH_LABEL, IDC_ROI_HEIGHT_LABEL };
-    const int roiEdits[] = { IDC_ROI_X, IDC_ROI_Y, IDC_ROI_WIDTH, IDC_ROI_HEIGHT };
-    const int roiLeft = results.left + sx(12);
-    const int roiApplyWidth = sx(100);
-    const int roiFieldWidth = (results.Width() - sx(24) - roiApplyWidth - sx(32)) / 4;
-    for (int index = 0; index < 4; ++index) {
-        const int x = roiLeft + index * (roiFieldWidth + sx(8));
-        place(roiLabels[index], box(x, results.top + sy(34), roiFieldWidth, sy(16)));
-        place(roiEdits[index], box(x, results.top + sy(52), roiFieldWidth, sy(28)));
-    }
-    place(IDC_APPLY_ROI, box(results.right - sx(12) - roiApplyWidth,
-        results.top + sy(52), roiApplyWidth, sy(28)));
-    place(IDC_RESULT_LIST, box(results.left + sx(12), results.top + sy(88),
-        results.Width() - sx(24), results.Height() - sy(100)));
+        results.Width() - sx(124), sy(18)));
+    place(IDC_RESULT_LIST, box(results.left + sx(12), results.top + sy(44),
+        results.Width() - sx(24), results.Height() - sy(56)));
 
     modeTabs_.SetItemSize(CSize((rightWidth - sx(8)) / 2, sy(36)));
     place(IDC_MODE_TABS, box(right, top, rightWidth, sy(40)));
@@ -421,23 +474,23 @@ void CLocatorMfcDlg::applyLayout()
     const int bodyWidth = rightWidth - sx(32);
     const int sectionShift = std::max(0, std::min(sy(24),
         (static_cast<int>(inspector.Height()) - sy(640)) / 4));
+    const int sectionX = bodyX + sx(12);
+    const int sectionWidth = bodyWidth - sx(24);
     place(IDC_PARAMETER_HINT, box(bodyX, bodyY, bodyWidth, sy(18)));
-    place(IDC_ANGLE_TITLE, box(bodyX, bodyY + sy(28) + sectionShift, bodyWidth, sy(18)));
-    place(IDC_ANGLE_HINT, box(bodyX, bodyY + sy(48) + sectionShift, bodyWidth, sy(16)));
-    place(IDC_DIVIDER_ANGLE, box(bodyX, bodyY + sy(140) + sectionShift, bodyWidth, 1));
-    place(IDC_SCALE_TITLE, box(bodyX, bodyY + sy(160) + sectionShift * 2, bodyWidth, sy(18)));
-    place(IDC_SCALE_HINT, box(bodyX, bodyY + sy(180) + sectionShift * 2, bodyWidth, sy(16)));
-    place(IDC_DIVIDER_SCALE, box(bodyX, bodyY + sy(272) + sectionShift * 2, bodyWidth, 1));
-    place(IDC_RESULT_OPTIONS_TITLE, box(bodyX, bodyY + sy(292) + sectionShift * 3, bodyWidth, sy(18)));
-    place(IDC_PRECISION_HINT, box(bodyX, bodyY + sy(312) + sectionShift * 3, bodyWidth, sy(16)));
-    place(IDC_DIVIDER_RESULT_OPTIONS, box(bodyX, bodyY + sy(468) + sectionShift * 3, bodyWidth, 1));
-    const auto fieldRow = [&place, &box, &sx, &sy, bodyX, bodyY, bodyWidth](
+    place(IDC_ANGLE_TITLE, box(bodyX, bodyY + sy(20) + sectionShift, bodyWidth, sy(132)));
+    place(IDC_ANGLE_HINT, box(sectionX, bodyY + sy(48) + sectionShift, sectionWidth, sy(16)));
+    place(IDC_SCALE_TITLE, box(bodyX, bodyY + sy(154) + sectionShift * 2, bodyWidth, sy(130)));
+    place(IDC_SCALE_HINT, box(sectionX, bodyY + sy(180) + sectionShift * 2, sectionWidth, sy(16)));
+    place(IDC_RESULT_OPTIONS_TITLE, box(bodyX, bodyY + sy(288) + sectionShift * 3, bodyWidth, sy(182)));
+    place(IDC_PRECISION_HINT, box(sectionX, bodyY + sy(312) + sectionShift * 3, sectionWidth, sy(16)));
+    const auto fieldRow = [&place, &box, &sx, &sy, sectionX, bodyY, sectionWidth](
         const int (&labels)[3], const int (&edits)[3], int labelY, int editY, int offset) {
-        const int fieldWidth = (bodyWidth - sx(16)) / 3;
+        const int fieldWidth = (sectionWidth - sx(16)) / 3;
         for (int column = 0; column < 3; ++column) {
-            const int x = bodyX + column * (fieldWidth + sx(8));
+            const int x = sectionX + column * (fieldWidth + sx(8));
             place(labels[column], box(x, bodyY + sy(labelY) + offset, fieldWidth, sy(16)));
-            place(edits[column], box(x, bodyY + sy(editY) + offset, fieldWidth, sy(32)));
+            const int height = edits[column] == IDC_SUBPIXEL ? sy(150) : sy(32);
+            place(edits[column], box(x, bodyY + sy(editY) + offset, fieldWidth, height));
         }
     };
     const int angleLabels[] = { IDC_ANGLE_MIN_LABEL, IDC_ANGLE_MAX_LABEL, IDC_ANGLE_STEP_LABEL };
@@ -455,32 +508,34 @@ void CLocatorMfcDlg::applyLayout()
     place(IDC_EXECUTION_HINT, box(bodyX, inspector.bottom - sy(90), bodyWidth, sy(38)));
     place(IDC_EXECUTE, box(bodyX, inspector.bottom - sy(52), bodyWidth, sy(36)));
 
-    place(IDC_BATCH_DIRECTORY_TITLE, box(bodyX, bodyY, bodyWidth, sy(18)));
-    place(IDC_BATCH_DIRECTORY_LABEL, box(bodyX, bodyY + sy(26), bodyWidth, sy(16)));
-    const int browseWidth = std::max(sx(80), bodyWidth / 5);
-    place(IDC_BATCH_PATH, box(bodyX, bodyY + sy(52),
-        bodyWidth - browseWidth - sx(8), sy(32)));
-    place(IDC_BATCH_BROWSE, box(bodyX + bodyWidth - browseWidth,
+    place(IDC_BATCH_DIRECTORY_TITLE, box(bodyX, bodyY - sy(6), bodyWidth, sy(104)));
+    place(IDC_BATCH_DIRECTORY_LABEL, box(sectionX, bodyY + sy(26), sectionWidth, sy(16)));
+    const int browseWidth = sectionWidth / 4;
+    place(IDC_BATCH_PATH, box(sectionX, bodyY + sy(52),
+        sectionWidth - browseWidth - sx(8), sy(32)));
+    place(IDC_BATCH_BROWSE, box(sectionX + sectionWidth - browseWidth,
         bodyY + sy(52), browseWidth, sy(32)));
-    place(IDC_BATCH_SETTINGS_TITLE, box(bodyX, bodyY + sy(124), bodyWidth, sy(18)));
-    place(IDC_BATCH_SETTINGS_HINT, box(bodyX, bodyY + sy(148), bodyWidth, sy(16)));
-    const int batchFieldWidth = (bodyWidth - sx(8)) / 2;
-    place(IDC_BATCH_COUNT_LABEL, box(bodyX, bodyY + sy(174), batchFieldWidth, sy(16)));
-    place(IDC_BATCH_THREADS_LABEL, box(bodyX + batchFieldWidth + sx(8),
+    place(IDC_BATCH_SETTINGS_TITLE, box(bodyX, bodyY + sy(112), bodyWidth, sy(230)));
+    place(IDC_BATCH_SETTINGS_HINT, box(sectionX, bodyY + sy(140), sectionWidth, sy(16)));
+    const int batchFieldWidth = (sectionWidth - sx(8)) / 2;
+    place(IDC_BATCH_COUNT_LABEL, box(sectionX, bodyY + sy(174), batchFieldWidth, sy(16)));
+    place(IDC_BATCH_THREADS_LABEL, box(sectionX + batchFieldWidth + sx(8),
         bodyY + sy(174), batchFieldWidth, sy(16)));
-    place(IDC_BATCH_COUNT, box(bodyX, bodyY + sy(192), batchFieldWidth, sy(32)));
-    place(IDC_BATCH_THREADS, box(bodyX + batchFieldWidth + sx(8),
+    place(IDC_BATCH_COUNT, box(sectionX, bodyY + sy(192), batchFieldWidth, sy(32)));
+    place(IDC_BATCH_THREADS, box(sectionX + batchFieldWidth + sx(8),
         bodyY + sy(192), batchFieldWidth, sy(32)));
-    place(IDC_BATCH_CONFIG_HINT, box(bodyX, bodyY + sy(234), bodyWidth, sy(54)));
-    place(IDC_BATCH_RUN, box(bodyX, bodyY + sy(296), batchFieldWidth, sy(36)));
-    place(IDC_BATCH_CANCEL, box(bodyX + batchFieldWidth + sx(8), bodyY + sy(296),
+    place(IDC_BATCH_CONFIG_HINT, box(sectionX, bodyY + sy(234), sectionWidth, sy(54)));
+    place(IDC_BATCH_RUN, box(sectionX, bodyY + sy(296), batchFieldWidth, sy(36)));
+    place(IDC_BATCH_CANCEL, box(sectionX + batchFieldWidth + sx(8), bodyY + sy(296),
         batchFieldWidth, sy(36)));
-    place(IDC_BATCH_PROGRESS, box(bodyX, bodyY + sy(342), bodyWidth - sx(142), sy(24)));
-    place(IDC_BATCH_FILTER, box(bodyX + bodyWidth - sx(136), bodyY + sy(340),
+    const int statsTop = bodyY + sy(350);
+    const int statsBottom = inspector.bottom - sy(16);
+    place(IDC_BATCH_STATS_TITLE, box(bodyX, statsTop, bodyWidth, statsBottom - statsTop));
+    place(IDC_BATCH_PROGRESS, box(sectionX, bodyY + sy(374), sectionWidth - sx(142), sy(24)));
+    place(IDC_BATCH_FILTER, box(sectionX + sectionWidth - sx(136), bodyY + sy(372),
         sx(136), sy(150)));
-    place(IDC_BATCH_STATS_TITLE, box(bodyX, bodyY + sy(368), bodyWidth, sy(18)));
-    place(IDC_BATCH_STATS, box(bodyX, bodyY + sy(392), bodyWidth,
-        inspector.bottom - bodyY - sy(408)));
+    place(IDC_BATCH_STATS, box(sectionX, bodyY + sy(402), sectionWidth,
+        statsBottom - bodyY - sy(414)));
     place(IDC_STATUS_TEXT, box(margin, height - sy(25), width - margin * 2, sy(19)));
 
     HDWP deferred = BeginDeferWindowPos(static_cast<int>(placements.size()));
@@ -494,7 +549,7 @@ void CLocatorMfcDlg::applyLayout()
         }
         HDWP next = DeferWindowPos(deferred, control->GetSafeHwnd(), nullptr,
             entry.second.left, entry.second.top, entry.second.Width(), entry.second.Height(),
-            SWP_NOZORDER | SWP_NOACTIVATE);
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS);
         if (next == nullptr) {
             EndDeferWindowPos(deferred);
             return;
@@ -509,6 +564,7 @@ void CLocatorMfcDlg::applyLayout()
     batchStats_.SetColumnWidth(1, statsClient.Width() * 55 / 100 - 2);
     RedrawWindow(nullptr, nullptr,
         RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_FRAME);
+    redrawInputFrames(this);
 }
 
 void CLocatorMfcDlg::OnSize(UINT type, int width, int height)
@@ -573,7 +629,9 @@ HBRUSH CLocatorMfcDlg::OnCtlColor(CDC* dc, CWnd* wnd, UINT ctlColor)
     if ((ctlColor == CTLCOLOR_STATIC || ctlColor == CTLCOLOR_BTN) && wnd != nullptr) {
         const int id = wnd->GetDlgCtrlID();
         dc->SetBkMode(TRANSPARENT);
-        if (id == IDC_STATUS_TEXT) {
+        if (id == IDC_STATUS_TEXT || id == IDC_ANGLE_TITLE || id == IDC_SCALE_TITLE ||
+            id == IDC_RESULT_OPTIONS_TITLE || id == IDC_BATCH_DIRECTORY_TITLE ||
+            id == IDC_BATCH_SETTINGS_TITLE || id == IDC_BATCH_STATS_TITLE) {
             dc->SetTextColor(RGB(22, 114, 135));
         } else if (id == IDC_APP_SUBTITLE || id == IDC_RESULT_HINT ||
                    id == IDC_PRECISION_HINT || id == IDC_SEARCH_PATH ||
@@ -773,39 +831,42 @@ LRESULT CLocatorMfcDlg::OnImageCursorPosition(WPARAM wParam, LPARAM lParam)
     return 0;
 }
 
-void CLocatorMfcDlg::OnApplyRoi()
-{
-    if (searchImage_.empty()) {
-        SetDlgItemText(IDC_STATUS_TEXT, L"请先加载搜索图，再设置 ROI");
-        return;
-    }
-    const int ids[] = { IDC_ROI_X, IDC_ROI_Y, IDC_ROI_WIDTH, IDC_ROI_HEIGHT };
-    int values[4] = {};
-    for (int index = 0; index < 4; ++index) {
-        if (!readInt(this, ids[index], values[index])) {
-            SetDlgItemText(IDC_STATUS_TEXT, L"ROI 的 x、y、宽和高必须是整数");
-            return;
-        }
-    }
-    const long long right = static_cast<long long>(values[0]) + values[2];
-    const long long bottom = static_cast<long long>(values[1]) + values[3];
-    if (values[0] < 0 || values[1] < 0 || values[2] <= 0 || values[3] <= 0 ||
-        right > searchImage_.cols || bottom > searchImage_.rows) {
-        SetDlgItemText(IDC_STATUS_TEXT, L"ROI 必须在搜索图内，宽和高至少为 1 像素");
-        return;
-    }
-    roi_ = { values[0], values[1], values[2], values[3] };
-    useRoi_ = true;
-    searchView_.setSelection(cv::Rect(roi_.x, roi_.y, roi_.width, roi_.height));
-    searchView_.setSelectionEnabled(false);
-    clearResultDisplay();
-    SetDlgItemText(IDC_STATUS_TEXT, L"已应用数值 ROI，旧结果已清除");
-}
-
 void CLocatorMfcDlg::OnParameterChanged(UINT id)
 {
-    (void)id;
+    if (id == IDC_BATCH_PATH) {
+        batchPairCount_ = 0;
+    }
+    if (id == IDC_BATCH_PATH || id == IDC_BATCH_COUNT) {
+        updateBatchDataHint();
+    }
     updateExecutionHint();
+}
+
+void CLocatorMfcDlg::updateBatchDataHint(int requestedCount)
+{
+    if (batchPairCount_ <= 0) {
+        SetDlgItemText(IDC_BATCH_SETTINGS_HINT, L"目录待扫描；任务数 0 表示全部");
+        return;
+    }
+    int count = requestedCount;
+    if (count < 0 && !readInt(this, IDC_BATCH_COUNT, count)) {
+        SetDlgItemText(IDC_BATCH_SETTINGS_HINT, L"任务数必须是大于或等于 0 的整数");
+        return;
+    }
+    if (count < 0) {
+        SetDlgItemText(IDC_BATCH_SETTINGS_HINT, L"任务数必须是大于或等于 0 的整数");
+        return;
+    }
+    const std::string hint = LocatorWorkflow::formatBatchDataHint(batchPairCount_, count);
+    SetDlgItemText(IDC_BATCH_SETTINGS_HINT, CString(CA2W(hint.c_str(), CP_UTF8)));
+}
+
+LRESULT CLocatorMfcDlg::OnDirectoryScanned(WPARAM wParam, LPARAM lParam)
+{
+    (void)wParam;
+    batchPairCount_ = static_cast<int>(lParam);
+    updateBatchDataHint();
+    return 0;
 }
 
 void CLocatorMfcDlg::OnChoiceChanged()
@@ -877,19 +938,6 @@ void CLocatorMfcDlg::updateBatchHint()
                    angle.GetString(), scale.GetString(), config.maxResults,
                    config.xVicinity, config.yVicinity, roi.GetString());
     SetDlgItemText(IDC_BATCH_CONFIG_HINT, summary);
-}
-
-void CLocatorMfcDlg::updateRoiFields()
-{
-    const int ids[] = { IDC_ROI_X, IDC_ROI_Y, IDC_ROI_WIDTH, IDC_ROI_HEIGHT };
-    const int values[] = { roi_.x, roi_.y, roi_.width, roi_.height };
-    for (int index = 0; index < 4; ++index) {
-        if (useRoi_) {
-            SetDlgItemInt(ids[index], values[index], FALSE);
-        } else {
-            SetDlgItemText(ids[index], L"");
-        }
-    }
 }
 
 void CLocatorMfcDlg::writeConfig(const LocatorConfig& config)
@@ -1030,11 +1078,10 @@ void CLocatorMfcDlg::showError(LocatorError error)
 void CLocatorMfcDlg::setSingleControlsEnabled(bool enabled)
 {
     const int ids[] = {
-        IDC_LOAD_SEARCH, IDC_LOAD_TEMPLATE, IDC_SELECT_ROI, IDC_CLEAR_ROI, IDC_APPLY_ROI,
+        IDC_LOAD_SEARCH, IDC_LOAD_TEMPLATE, IDC_SELECT_ROI, IDC_CLEAR_ROI,
         IDC_EXECUTE, IDC_ANGLE_MIN, IDC_ANGLE_MAX, IDC_ANGLE_STEP, IDC_SCALE_MIN,
         IDC_SCALE_MAX, IDC_SCALE_STEP, IDC_PYRAMID, IDC_SUBPIXEL, IDC_MIN_SCORE,
-        IDC_MAX_RESULTS, IDC_X_VICINITY, IDC_Y_VICINITY, IDC_BACKEND,
-        IDC_ROI_X, IDC_ROI_Y, IDC_ROI_WIDTH, IDC_ROI_HEIGHT
+        IDC_MAX_RESULTS, IDC_X_VICINITY, IDC_Y_VICINITY, IDC_BACKEND
     };
     for (int id : ids) {
         GetDlgItem(id)->EnableWindow(enabled);
@@ -1131,11 +1178,76 @@ void CLocatorMfcDlg::showSingleResult(const LocatorWorkflow::SingleResult& run)
     SetDlgItemText(IDC_STATUS_TEXT, status);
 }
 
+void CLocatorMfcDlg::showBatchRow(int row)
+{
+    if (row < 0 || row >= static_cast<int>(batchRows_.size()) || !batchReviewData_ ||
+        batchReviewData_->pairs.empty()) {
+        return;
+    }
+    const BatchRow& selected = batchRows_[row];
+    if (selected.taskId < 0 ||
+        selected.taskId >= static_cast<int>(batchReviewData_->data.tasks.size()) ||
+        selected.taskId >= static_cast<int>(batchResultData_.size()) ||
+        batchResultData_[selected.taskId].id != selected.taskId) {
+        return;
+    }
+    const BatchTask& task = batchReviewData_->data.tasks[selected.taskId];
+    const BatchResult& result = batchResultData_[selected.taskId];
+    if (selected.matchIndex >= static_cast<int>(result.matches.size())) {
+        return;
+    }
+    searchImage_ = cv::Mat(task.search.height, task.search.width, CV_8UC1,
+        const_cast<unsigned char*>(task.search.data), task.search.stride).clone();
+    modelImage_ = cv::Mat(task.model.height, task.model.width, CV_8UC1,
+        const_cast<unsigned char*>(task.model.data), task.model.stride).clone();
+    searchView_.setImage(searchImage_);
+    templateView_.setImage(modelImage_);
+    useRoi_ = task.config.useRoi;
+    roi_ = task.config.roi;
+    if (useRoi_) {
+        searchView_.setSelection(cv::Rect(roi_.x, roi_.y, roi_.width, roi_.height));
+    }
+    searchView_.setSelectionEnabled(false);
+    searchView_.setResults(result.error == LocatorError::Ok ? result.matches : std::vector<LocatorResult>(),
+                           modelImage_.cols, modelImage_.rows);
+    searchView_.setSelectedResult(selected.matchIndex);
+
+    const ThickPair& pair = batchReviewData_->pairs[
+        static_cast<size_t>(selected.taskId) % batchReviewData_->pairs.size()];
+    SetDlgItemText(IDC_SEARCH_PATH, CString(CA2W(pair.searchPath.c_str(), CP_ACP)));
+    SetDlgItemText(IDC_TEMPLATE_PATH, CString(CA2W(pair.kernelPath.c_str(), CP_ACP)));
+    CString dimensions;
+    dimensions.Format(L"%d × %d", searchImage_.cols, searchImage_.rows);
+    SetDlgItemText(IDC_IMAGE_META_SEARCH, dimensions);
+    dimensions.Format(L"%d × %d", modelImage_.cols, modelImage_.rows);
+    SetDlgItemText(IDC_IMAGE_META_TEMPLATE, dimensions);
+    CString batchHint;
+    GetDlgItemText(IDC_BATCH_CONFIG_HINT, batchHint);
+    updateExecutionHint();
+    SetDlgItemText(IDC_BATCH_CONFIG_HINT, batchHint);
+
+    CString status;
+    if (result.error != LocatorError::Ok) {
+        status.Format(L"查看批量任务 %d（Thick_%d）：%s", result.id, pair.id,
+                      errorText(result.error));
+    } else if (result.matches.empty()) {
+        status.Format(L"查看批量任务 %d（Thick_%d）：无匹配，已显示对应图片", result.id, pair.id);
+    } else {
+        status.Format(L"查看批量任务 %d（Thick_%d）：匹配 %d / %d", result.id, pair.id,
+                      selected.matchIndex + 1, static_cast<int>(result.matches.size()));
+    }
+    SetDlgItemText(IDC_STATUS_TEXT, status);
+}
+
 void CLocatorMfcDlg::OnResultItemChanged(NMHDR* header, LRESULT* result)
 {
     const NMLISTVIEW* change = reinterpret_cast<const NMLISTVIEW*>(header);
-    if (!batchResults_ && (change->uNewState & LVIS_SELECTED) != 0) {
-        searchView_.setSelectedResult(change->iItem);
+    if ((change->uNewState & LVIS_SELECTED) != 0) {
+        if (batchResults_) {
+            showBatchRow(change->iItem);
+        } else {
+            searchView_.setSelectedResult(change->iItem);
+        }
     }
     *result = 0;
 }
@@ -1190,6 +1302,7 @@ void CLocatorMfcDlg::OnDestroy()
 void CLocatorMfcDlg::prepareResultList(bool batch)
 {
     resultsList_.DeleteAllItems();
+    batchRows_.clear();
     CHeaderCtrl* header = resultsList_.GetHeaderCtrl();
     while (header != nullptr && header->GetItemCount() > 0) {
         resultsList_.DeleteColumn(0);
@@ -1237,44 +1350,88 @@ void CLocatorMfcDlg::resizeResultColumns()
     }
 }
 
+int CALLBACK browseInitialDirectoryCallback(HWND browser, UINT message, LPARAM, LPARAM data)
+{
+    if (message == BFFM_INITIALIZED) {
+        SendMessageW(browser, BFFM_SETSELECTIONW, TRUE, data);
+    }
+    return 0;
+}
+
 void CLocatorMfcDlg::OnBatchBrowse()
 {
-    CFileDialog dialog(TRUE, L"bmp", nullptr, OFN_FILEMUSTEXIST,
-                       L"BMP 文件 (*.bmp)|*.bmp|所有文件 (*.*)|*.*||", this);
-    if (dialog.DoModal() != IDOK) {
+    CString input;
+    GetDlgItemText(IDC_BATCH_PATH, input);
+    input.Trim();
+    const std::wstring project = LocatorWorkflow::projectDirectory();
+    std::wstring initial = LocatorWorkflow::resolveBatchDirectory(input.GetString(), project);
+    if (initial.empty()) {
+        initial = LocatorWorkflow::readBatchDirectoryMemory(LocatorWorkflow::batchDirectorySettingsPath());
+    }
+    if (initial.empty()) {
+        initial = project;
+    }
+    const HRESULT initialized = OleInitialize(nullptr);
+    if (FAILED(initialized)) {
+        SetDlgItemText(IDC_STATUS_TEXT, L"无法初始化目录选择所需的 COM 环境");
         return;
     }
-    const CString path = dialog.GetPathName();
-    const int separator = path.ReverseFind(L'\\');
-    if (separator > 0) {
-        SetDlgItemText(IDC_BATCH_PATH, path.Left(separator));
+    BROWSEINFO info = {};
+    info.hwndOwner = GetSafeHwnd();
+    info.lpszTitle = L"选择包含 Thick 搜索图与模板的目录";
+    info.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE | BIF_EDITBOX;
+    info.lpfn = browseInitialDirectoryCallback;
+    info.lParam = reinterpret_cast<LPARAM>(initial.c_str());
+    LPITEMIDLIST selection = SHBrowseForFolderW(&info);
+    OleUninitialize();
+    if (selection == nullptr) {
+        return;
+    }
+    wchar_t path[MAX_PATH] = {};
+    const BOOL selected = SHGetPathFromIDListW(selection, path);
+    CoTaskMemFree(selection);
+    if (!selected) {
+        SetDlgItemText(IDC_STATUS_TEXT, L"无法取得所选目录路径");
+        return;
+    }
+    SetDlgItemText(IDC_BATCH_PATH, path);
+    const bool remembered = LocatorWorkflow::writeBatchDirectoryMemory(
+        LocatorWorkflow::batchDirectorySettingsPath(), path);
+    const CString memoryWarning = remembered ? CString() : CString(L"；目录记忆保存失败，请检查程序目录写入权限");
+    try {
+        const std::string nativePath(CT2A(path, CP_ACP));
+        batchPairCount_ = static_cast<int>(findThickPairs(nativePath).size());
+        updateBatchDataHint();
+        SetDlgItemText(IDC_STATUS_TEXT, L"目录扫描完成" + memoryWarning);
+    } catch (const std::exception& error) {
+        const CString message(CA2W(error.what(), CP_UTF8));
+        SetDlgItemText(IDC_STATUS_TEXT, message + memoryWarning);
+    }
+    if (!remembered) {
+        AfxMessageBox(L"已使用本次选择的目录，但无法保存目录记忆。请检查程序目录的写入权限。");
     }
 }
 
 void CLocatorMfcDlg::setBatchControlsEnabled(bool enabled)
 {
     const int ids[] = { IDC_BATCH_PATH, IDC_BATCH_BROWSE, IDC_BATCH_COUNT,
-                        IDC_BATCH_THREADS, IDC_BATCH_RUN, IDC_BATCH_FILTER, IDC_BATCH_BENCHMARK };
+                        IDC_BATCH_THREADS, IDC_BATCH_RUN, IDC_BATCH_FILTER };
     for (int id : ids) {
         GetDlgItem(id)->EnableWindow(enabled);
     }
     GetDlgItem(IDC_BATCH_CANCEL)->EnableWindow(!enabled && batchRunning_);
-    GetDlgItem(IDC_BATCH_EXPORT)->EnableWindow(enabled && batchResults_ && !batchResultData_.empty());
-    GetDlgItem(IDC_BENCHMARK_EXPORT)->EnableWindow(enabled && hasBenchmark_);
 }
 
 void CLocatorMfcDlg::clearBatchResultDisplay()
 {
     batchResultData_.clear();
     displayedBatchResults_.clear();
-    benchmarkData_ = LocatorWorkflow::BenchmarkRun();
-    hasBenchmark_ = false;
+    batchReviewData_.reset();
     batchFilter_.SetCurSel(0);
     prepareResultList(true);
+    searchView_.setResults({}, modelImage_.cols, modelImage_.rows);
     setBatchStats(std::vector<CString>(7, CString(L"本次未产生")));
     SetDlgItemText(IDC_BATCH_PROGRESS, L"等待本次执行");
-    GetDlgItem(IDC_BATCH_EXPORT)->EnableWindow(FALSE);
-    GetDlgItem(IDC_BENCHMARK_EXPORT)->EnableWindow(FALSE);
 }
 
 void CLocatorMfcDlg::populateBatchResults()
@@ -1290,6 +1447,7 @@ void CLocatorMfcDlg::populateBatchResults()
             CString value;
             value.Format(L"%d", result.id);
             resultsList_.InsertItem(row, value);
+            batchRows_.push_back({ result.id, result.matches.empty() ? -1 : matchIndex });
             resultsList_.SetItemText(row, 1, result.error != LocatorError::Ok
                 ? CString(L"执行错误：") + errorText(result.error)
                 : result.matches.empty() ? CString(L"无匹配") : CString(L"成功"));
@@ -1346,39 +1504,13 @@ void CLocatorMfcDlg::showBatchResult(const LocatorWorkflow::BatchRun& run)
     if (run.cancelled) {
         SetDlgItemText(IDC_STATUS_TEXT, L"批量评估已取消，只保留已完成任务的结果");
     } else {
-        SetDlgItemText(IDC_STATUS_TEXT, L"批量评估完成，列表可筛选并导出当前结果");
+        SetDlgItemText(IDC_STATUS_TEXT, L"批量评估完成，点击结果可查看图像及匹配");
     }
-    GetDlgItem(IDC_BATCH_EXPORT)->EnableWindow(!batchResultData_.empty());
 }
 
 void CLocatorMfcDlg::OnBatchFilterChanged()
 {
     populateBatchResults();
-}
-
-void CLocatorMfcDlg::OnBatchExport()
-{
-    if (batchRunning_ || displayedBatchResults_.empty()) {
-        return;
-    }
-    CFileDialog dialog(FALSE, L"csv", L"batch_results.csv", OFN_OVERWRITEPROMPT,
-                       L"CSV 文件 (*.csv)|*.csv||", this);
-    if (dialog.DoModal() != IDOK) {
-        return;
-    }
-    const CString path = dialog.GetPathName();
-    try {
-        LocatorWorkflow::exportBatchCsv(std::string(CT2A(path.GetString(), CP_ACP)),
-                                       displayedBatchResults_);
-        CString status;
-        status.Format(L"已导出当前筛选的 %d 个任务：%s",
-                      static_cast<int>(displayedBatchResults_.size()), path.GetString());
-        SetDlgItemText(IDC_STATUS_TEXT, status);
-    } catch (const std::exception& error) {
-        const CString message(CA2W(error.what(), CP_UTF8));
-        SetDlgItemText(IDC_STATUS_TEXT, message);
-        AfxMessageBox(message);
-    }
 }
 
 void CLocatorMfcDlg::OnBatchCancel()
@@ -1387,116 +1519,6 @@ void CLocatorMfcDlg::OnBatchCancel()
         batchCancelRequested_ = true;
         GetDlgItem(IDC_BATCH_CANCEL)->EnableWindow(FALSE);
         SetDlgItemText(IDC_STATUS_TEXT, L"正在取消，当前任务或 CUDA 分组完成后停止");
-    }
-}
-
-void CLocatorMfcDlg::showBenchmarkResult()
-{
-    batchResultData_ = benchmarkData_.finalRun.results;
-    populateBatchResults();
-    const LocatorWorkflow::BatchSummary summary =
-        LocatorWorkflow::summarizeBatch(benchmarkData_.finalRun);
-    std::vector<CString> statistics;
-    CString value;
-    value.Format(L"%d / %d", benchmarkData_.taskCount, benchmarkData_.taskCount);
-    statistics.push_back(value);
-    value.Format(L"%d / %d / %d", summary.matched, summary.noMatch, summary.errors);
-    statistics.push_back(value);
-    const auto statistic = [&statistics](double number) {
-        CString value;
-        value.Format(L"%.3f ms", number);
-        statistics.push_back(value);
-    };
-    statistic(summary.preprocessMeanMs);
-    statistic(summary.searchMeanMs);
-    statistic(summary.totalMeanMs);
-    statistic(summary.p99Ms);
-    statistic(benchmarkData_.medianMs);
-    setBatchStats(statistics, true);
-    SetDlgItemText(IDC_BATCH_CONFIG_HINT,
-        CString(L"固定口径：完整图 | 角度 0° | 尺度 1\n"
-                L"金字塔=1 | 亚像素=1/4 | 最低分=0 | Top-N=1 | 去重=(0,0)px\n") +
-        (backendCombo_.GetCurSel() == 1 ? CString(L"后端=GPU") : CString(L"后端=CPU")) +
-        L" | 预热 5 轮 | 记录 50 轮");
-    CString progress;
-    progress.Format(L"500 任务 / %d 对 | 中位 %.3f ms", benchmarkData_.pairCount,
-                    benchmarkData_.medianMs);
-    SetDlgItemText(IDC_BATCH_PROGRESS, progress);
-    CString status;
-    status.Format(L"固定基准完成：首轮 %.3f ms，50 轮整体中位数 %.3f ms，可导出原始耗时",
-                  benchmarkData_.firstRoundMs, benchmarkData_.medianMs);
-    SetDlgItemText(IDC_STATUS_TEXT, status);
-    GetDlgItem(IDC_BENCHMARK_EXPORT)->EnableWindow(TRUE);
-}
-
-void CLocatorMfcDlg::OnBatchBenchmark()
-{
-    if (batchRunning_ || singleRunning_) {
-        return;
-    }
-    CString directory;
-    GetDlgItemText(IDC_BATCH_PATH, directory);
-    directory.Trim();
-    int threads = 0;
-    if (directory.IsEmpty() || !readInt(this, IDC_BATCH_THREADS, threads)) {
-        SetDlgItemText(IDC_STATUS_TEXT, L"固定基准需要有效的 Thick 目录和整数线程数");
-        return;
-    }
-    showInspectorPage(1);
-    clearBatchResultDisplay();
-    batchRunning_ = true;
-    setBatchControlsEnabled(false);
-    GetDlgItem(IDC_BATCH_CANCEL)->EnableWindow(FALSE);
-    setSingleControlsEnabled(false);
-    SetDlgItemText(IDC_STATUS_TEXT, L"固定基准运行中：500 任务，预热 5 轮，记录 50 轮");
-    RedrawWindow(nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
-    CWaitCursor wait;
-    try {
-        const std::string path(CT2A(directory.GetString(), CP_ACP));
-        const std::vector<ThickPair> pairs = findThickPairs(path);
-        BatchDataSet data = makeBenchmarkTasks(pairs, 500);
-        LocatorConfig fixed;
-        fixed.backend = backendCombo_.GetCurSel() == 1 ? LocatorBackend::Gpu : LocatorBackend::Cpu;
-        fixed.subPixelResolution = 4;
-        for (BatchTask& task : data.tasks) {
-            task.config = fixed;
-        }
-        benchmarkData_ = LocatorWorkflow::runFixedBenchmark(
-            data.tasks, threads, 5, 50, static_cast<int>(pairs.size()));
-        hasBenchmark_ = true;
-        showBenchmarkResult();
-    } catch (const std::exception& error) {
-        clearBatchResultDisplay();
-        const CString message(CA2W(error.what(), CP_UTF8));
-        SetDlgItemText(IDC_STATUS_TEXT, L"固定基准失败：" + message);
-    } catch (...) {
-        clearBatchResultDisplay();
-        SetDlgItemText(IDC_STATUS_TEXT, L"固定基准失败：未知异常");
-    }
-    batchRunning_ = false;
-    setBatchControlsEnabled(true);
-    setSingleControlsEnabled(true);
-}
-
-void CLocatorMfcDlg::OnBenchmarkExport()
-{
-    if (!hasBenchmark_ || batchRunning_) {
-        return;
-    }
-    CFileDialog dialog(FALSE, L"csv", L"fixed_benchmark.csv", OFN_OVERWRITEPROMPT,
-                       L"CSV 文件 (*.csv)|*.csv||", this);
-    if (dialog.DoModal() != IDOK) {
-        return;
-    }
-    const CString path = dialog.GetPathName();
-    try {
-        LocatorWorkflow::exportBenchmarkCsv(std::string(CT2A(path.GetString(), CP_ACP)),
-                                            benchmarkData_);
-        SetDlgItemText(IDC_STATUS_TEXT, L"固定基准原始耗时已导出：" + path);
-    } catch (const std::exception& error) {
-        const CString message(CA2W(error.what(), CP_UTF8));
-        SetDlgItemText(IDC_STATUS_TEXT, message);
-        AfxMessageBox(message);
     }
 }
 
@@ -1509,6 +1531,8 @@ void CLocatorMfcDlg::OnBatchRun()
     CString directory;
     GetDlgItemText(IDC_BATCH_PATH, directory);
     directory.Trim();
+    directory = LocatorWorkflow::resolveBatchDirectory(
+        directory.GetString(), LocatorWorkflow::projectDirectory()).c_str();
     int count = 0;
     int threads = 0;
     LocatorConfig config;
@@ -1543,13 +1567,17 @@ void CLocatorMfcDlg::OnBatchRun()
             BatchCompletion* completion = new BatchCompletion;
             completion->generation = generation;
             try {
-                const std::vector<ThickPair> pairs = findThickPairs(path);
-                const int actualCount = count == 0 ? static_cast<int>(pairs.size()) : count;
-                BatchDataSet data = makeBenchmarkTasks(pairs, actualCount);
-                for (BatchTask& task : data.tasks) {
+                completion->review = std::make_shared<BatchReviewData>();
+                completion->review->pairs = findThickPairs(path);
+                PostMessage(WM_LOCATOR_DIRECTORY_SCANNED, 0,
+                            static_cast<LPARAM>(completion->review->pairs.size()));
+                const int actualCount = count == 0 ?
+                    static_cast<int>(completion->review->pairs.size()) : count;
+                completion->review->data = makeBenchmarkTasks(completion->review->pairs, actualCount);
+                for (BatchTask& task : completion->review->data.tasks) {
                     task.config = config;
                 }
-                completion->run = LocatorWorkflow::runBatchControlled(data.tasks, threads,
+                completion->run = LocatorWorkflow::runBatchControlled(completion->review->data.tasks, threads,
                     [this](int completed, int total) {
                         BatchProgressData* progress = new BatchProgressData{ completed, total };
                         if (!PostMessage(WM_LOCATOR_BATCH_PROGRESS, 0,
@@ -1612,6 +1640,7 @@ LRESULT CLocatorMfcDlg::OnBatchComplete(WPARAM wParam, LPARAM lParam)
             const CString message(CA2W(completion->run.diagnostic.c_str(), CP_UTF8));
             SetDlgItemText(IDC_STATUS_TEXT, L"批量评估失败：" + message);
         } else {
+            batchReviewData_ = completion->review;
             showBatchResult(completion->run);
         }
     }
@@ -1623,7 +1652,6 @@ void CLocatorMfcDlg::clearResultDisplay()
 {
     resultsList_.DeleteAllItems();
     searchView_.setResults({}, modelImage_.cols, modelImage_.rows);
-    updateRoiFields();
     updateExecutionHint();
 }
 
@@ -1698,6 +1726,13 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     ShowWindow(SW_HIDE);
     require(GetDlgItem(IDC_SELECT_TEMPLATE) == nullptr,
             "模板只能通过单独加载图片指定，不应保留框选模板控件");
+    const int removedControlIds[] = {
+        1112, 1113, 1114, 1115, 1116, 1117, 1118, 1119, 1120, 1125, 1126, 1127
+    };
+    for (int id : removedControlIds) {
+        require(GetDlgItem(id) == nullptr,
+                ("不应保留已删除的 ROI 或批量辅助控件，ID=" + std::to_string(id)).c_str());
+    }
     require(GetDlgItem(IDC_RESET) != nullptr && !GetDlgItem(IDC_RESET)->IsWindowEnabled(),
             "没有完整图片基准时复位按钮应禁用");
     searchImage_ = search;
@@ -1799,6 +1834,12 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
         CRect rect;
         GetDlgItem(id)->GetWindowRect(&rect);
         ScreenToClient(&rect);
+        if (id == IDC_SUBPIXEL) {
+            COMBOBOXINFO info = { sizeof(COMBOBOXINFO) };
+            if (::GetComboBoxInfo(GetDlgItem(id)->GetSafeHwnd(), &info)) {
+                rect.bottom = rect.top + info.rcItem.bottom + 4;
+            }
+        }
         return rect;
     };
     if (previewPath != nullptr && *previewPath != L'\0') {
@@ -1842,16 +1883,16 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     require(tabs != nullptr && tabs->SendMessage(TCM_GETITEMCOUNT) == 2,
             "右侧缺少搜索参数与批量评估原生页签");
     require(tabs->SendMessage(TCM_GETCURSEL) == 0, "默认页签不是搜索参数");
-    SetWindowSubclass(GetDlgItem(IDC_DIVIDER_ANGLE)->GetSafeHwnd(), countControlPaint, 1, 0);
+    SetWindowSubclass(GetDlgItem(IDC_ANGLE_TITLE)->GetSafeHwnd(), countControlPaint, 1, 0);
     SetWindowSubclass(GetDlgItem(IDC_SEARCH_VIEW)->GetSafeHwnd(), countControlPaint, 1, 0);
     ShowWindow(SW_SHOWNOACTIVATE);
     RedrawWindow(nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
-    dividerPaintCount = 0;
+    groupPaintCount = 0;
     imagePaintCount = 0;
     applyLayout();
-    require(dividerPaintCount > 0 && imagePaintCount > 0,
-            (std::string("布局后分割线和图像控件没有统一重绘，次数=") +
-             std::to_string(dividerPaintCount) + "/" + std::to_string(imagePaintCount)).c_str());
+    require(groupPaintCount > 0 && imagePaintCount > 0,
+            (std::string("布局后分组框和图像控件没有统一重绘，次数=") +
+             std::to_string(groupPaintCount) + "/" + std::to_string(imagePaintCount)).c_str());
     CRect directView;
     searchView_.GetWindowRect(&directView);
     imagePaintCount = 0;
@@ -1923,12 +1964,6 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     GetDlgItemText(IDC_BATCH_COUNT_LABEL, caption);
     require(caption.Find(L"0") >= 0 && caption.Find(L"全部") >= 0,
             "批量任务数没有说明零值含义");
-    const int dividerIds[] = { IDC_DIVIDER_ANGLE, IDC_DIVIDER_SCALE, IDC_DIVIDER_RESULT_OPTIONS };
-    for (int id : dividerIds) {
-        CWnd* divider = GetDlgItem(id);
-        require(divider != nullptr && (divider->GetStyle() & SS_TYPEMASK) == SS_ETCHEDHORZ,
-                "参数分区缺少细分隔线");
-    }
     const auto requireWithin = [&controlRect, &require](int childId, int panelId) {
         const CRect child = controlRect(childId);
         const CRect panel = controlRect(panelId);
@@ -1961,7 +1996,7 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     require((tabs->GetStyle() & TCS_OWNERDRAWFIXED) != 0,
             "页签没有明确的选中项高亮绘制");
     require(controlRect(IDC_EXECUTION_HINT).top -
-            controlRect(IDC_DIVIDER_RESULT_OPTIONS).bottom <= MulDiv(120, dpiY_, 96),
+            controlRect(IDC_RESULT_OPTIONS_TITLE).bottom <= MulDiv(120, dpiY_, 96),
             "默认窗口的参数与执行按钮之间存在过大空白");
     requireSameRow(IDC_ANGLE_MIN, IDC_ANGLE_MAX, IDC_ANGLE_STEP,
                    "角度最小值、最大值和步进必须并排");
@@ -2008,11 +2043,43 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     GetClientRect(&client);
     require(client.Width() <= 1800 && client.Height() <= 1000,
             "默认对话框尺寸过大，不适合 1080p 工作区");
-    const auto validateVisibleLayout = [this, &require](bool allowEllipsis) {
+    const std::pair<int, std::vector<int>> sectionGroups[] = {
+        { IDC_ANGLE_TITLE, { IDC_ANGLE_HINT, IDC_ANGLE_MIN_LABEL, IDC_ANGLE_MAX_LABEL,
+            IDC_ANGLE_STEP_LABEL, IDC_ANGLE_MIN, IDC_ANGLE_MAX, IDC_ANGLE_STEP } },
+        { IDC_SCALE_TITLE, { IDC_SCALE_HINT, IDC_SCALE_MIN_LABEL, IDC_SCALE_MAX_LABEL,
+            IDC_SCALE_STEP_LABEL, IDC_SCALE_MIN, IDC_SCALE_MAX, IDC_SCALE_STEP } },
+        { IDC_RESULT_OPTIONS_TITLE, { IDC_PRECISION_HINT, IDC_PYRAMID_LABEL,
+            IDC_SUBPIXEL_LABEL, IDC_MIN_SCORE_LABEL, IDC_PYRAMID, IDC_SUBPIXEL,
+            IDC_MIN_SCORE, IDC_MAX_RESULTS_LABEL, IDC_X_VICINITY_LABEL,
+            IDC_Y_VICINITY_LABEL, IDC_MAX_RESULTS, IDC_X_VICINITY, IDC_Y_VICINITY } },
+        { IDC_BATCH_DIRECTORY_TITLE, { IDC_BATCH_DIRECTORY_LABEL, IDC_BATCH_PATH, IDC_BATCH_BROWSE } },
+        { IDC_BATCH_SETTINGS_TITLE, { IDC_BATCH_SETTINGS_HINT, IDC_BATCH_COUNT_LABEL,
+            IDC_BATCH_THREADS_LABEL, IDC_BATCH_COUNT, IDC_BATCH_THREADS,
+            IDC_BATCH_CONFIG_HINT, IDC_BATCH_RUN, IDC_BATCH_CANCEL } },
+        { IDC_BATCH_STATS_TITLE, { IDC_BATCH_PROGRESS, IDC_BATCH_FILTER, IDC_BATCH_STATS } }
+    };
+    const auto validateSectionGroups = [this, &require, &controlRect, &sectionGroups] {
+        for (const auto& group : sectionGroups) {
+            CWnd* frame = GetDlgItem(group.first);
+            require(frame != nullptr && (frame->GetStyle() & BS_TYPEMASK) == BS_GROUPBOX,
+                    (std::string("功能分区缺少带标题的完整边界，ID=") +
+                     std::to_string(group.first)).c_str());
+            const CRect bounds = controlRect(group.first);
+            for (int child : group.second) {
+                const CRect content = controlRect(child);
+                require(bounds.PtInRect(content.TopLeft()) &&
+                        bounds.PtInRect(CPoint(content.right - 1, content.bottom - 1)),
+                        (std::string("控件超出所属功能分组，分组=") + std::to_string(group.first) +
+                         "，控件=" + std::to_string(child)).c_str());
+            }
+        }
+    };
+    const auto validateVisibleLayout = [this, &require, &sectionGroups, &validateSectionGroups](bool allowEllipsis) {
+        validateSectionGroups();
         CRect bounds;
         GetClientRect(&bounds);
         CClientDC dc(this);
-        std::vector<CRect> visibleRects;
+        std::vector<std::pair<int, CRect>> visibleRects;
         for (CWnd* child = GetWindow(GW_CHILD); child != nullptr;
              child = child->GetNextWindow()) {
             if ((child->GetStyle() & WS_VISIBLE) == 0) {
@@ -2032,18 +2099,27 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
             require(rect.left >= bounds.left && rect.top >= bounds.top &&
                     rect.right <= bounds.right && rect.bottom <= bounds.bottom,
                     "可见控件超出对话框边界");
-            for (const CRect& previous : visibleRects) {
+            const int id = child->GetDlgCtrlID();
+            for (const auto& previous : visibleRects) {
+                bool grouped = false;
+                for (const auto& group : sectionGroups) {
+                    if (previous.first == group.first &&
+                        previous.second.PtInRect(rect.TopLeft()) &&
+                        previous.second.PtInRect(CPoint(rect.right - 1, rect.bottom - 1))) {
+                        grouped = true;
+                        break;
+                    }
+                }
                 CRect overlap;
-                require(!overlap.IntersectRect(rect, previous),
+                require(grouped || !overlap.IntersectRect(rect, previous.second),
                         (std::string("可见控件之间存在重叠，ID=") +
-                         std::to_string(child->GetDlgCtrlID()) + "，矩形=" +
+                         std::to_string(id) + "，矩形=" +
                          std::to_string(rect.left) + "," + std::to_string(rect.top) + "," +
                          std::to_string(rect.right) + "," + std::to_string(rect.bottom) + "，已有=" +
-                         std::to_string(previous.left) + "," + std::to_string(previous.top) + "," +
-                         std::to_string(previous.right) + "," + std::to_string(previous.bottom)).c_str());
+                         std::to_string(previous.second.left) + "," + std::to_string(previous.second.top) + "," +
+                         std::to_string(previous.second.right) + "," + std::to_string(previous.second.bottom)).c_str());
             }
-            visibleRects.push_back(rect);
-            const int id = child->GetDlgCtrlID();
+            visibleRects.push_back({ id, rect });
             const bool variableText = id == IDC_SEARCH_PATH || id == IDC_TEMPLATE_PATH ||
                 id == IDC_BATCH_PATH || id == IDC_BATCH_STATS || id == IDC_STATUS_TEXT;
             CString text;
@@ -2107,26 +2183,24 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
             executionSummary.Find(L"0.9") >= 0 && executionSummary.Find(L"1.05") >= 0 &&
             executionSummary.Find(L"10") >= 0 && executionSummary.Find(L"100") >= 0,
             "执行摘要没有反映实际角度、尺度和 ROI");
-    SetDlgItemInt(IDC_ROI_X, 12);
-    SetDlgItemInt(IDC_ROI_Y, 14);
-    SetDlgItemInt(IDC_ROI_WIDTH, 40);
-    SetDlgItemInt(IDC_ROI_HEIGHT, 30);
-    SendMessage(WM_COMMAND, MAKEWPARAM(IDC_APPLY_ROI, BN_CLICKED),
-                reinterpret_cast<LPARAM>(GetDlgItem(IDC_APPLY_ROI)->GetSafeHwnd()));
-    const cv::Rect numericRoi = searchView_.selectedRect();
+    const auto dragRoi = [this](const CPoint& first, const CPoint& second) {
+        searchView_.setSelectionEnabled(true);
+        searchView_.SendMessage(WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(first.x, first.y));
+        searchView_.SendMessage(WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(second.x, second.y));
+        searchView_.SendMessage(WM_LBUTTONUP, 0, MAKELPARAM(second.x, second.y));
+        SendMessage(WM_IMAGE_SELECTION_CHANGED, 0, 0);
+    };
+    dragRoi(searchView_.imageToClient(12.5, 14.5), searchView_.imageToClient(51.5, 43.5));
+    const std::string mouseRoiDetail = "实际=" + std::to_string(roi_.x) + "," +
+        std::to_string(roi_.y) + "," + std::to_string(roi_.width) + "," + std::to_string(roi_.height);
     require(useRoi_ && roi_.x == 12 && roi_.y == 14 && roi_.width == 40 && roi_.height == 30 &&
-            numericRoi == cv::Rect(12, 14, 40, 30),
-            "ROI 数值、红框和核心配置没有同步");
+            searchView_.selectedRect() == cv::Rect(12, 14, 40, 30),
+            ("鼠标 ROI、红框和核心配置没有同步，" + mouseRoiDetail).c_str());
     OnClearRoi();
-    GetDlgItemText(IDC_ROI_X, executionSummary);
-    require(!useRoi_ && executionSummary.IsEmpty() && searchView_.selectedRect().empty(),
-            "清除 ROI 后数值或红框未同步清空");
-    SetDlgItemInt(IDC_ROI_X, 10);
-    SetDlgItemInt(IDC_ROI_Y, 10);
-    SetDlgItemInt(IDC_ROI_WIDTH, 100);
-    SetDlgItemInt(IDC_ROI_HEIGHT, 100);
-    SendMessage(WM_COMMAND, MAKEWPARAM(IDC_APPLY_ROI, BN_CLICKED),
-                reinterpret_cast<LPARAM>(GetDlgItem(IDC_APPLY_ROI)->GetSafeHwnd()));
+    require(!useRoi_ && searchView_.selectedRect().empty(), "清除 ROI 后红框或配置未清空");
+    dragRoi(searchView_.imageToClient(10.5, 10.5), searchView_.imageToClient(109.5, 109.5));
+    require(useRoi_ && searchView_.selectedRect() == cv::Rect(10, 10, 100, 100),
+            "重新鼠标框选后 ROI 不正确");
     showInspectorPage(1);
     CString batchConfigHint;
     GetDlgItemText(IDC_BATCH_CONFIG_HINT, batchConfigHint);
@@ -2281,6 +2355,193 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
 
     CRect originalWindow;
     GetWindowRect(&originalWindow);
+    {
+        SetWindowPos(nullptr, 0, 0, 0, 0,
+                     SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        ShowWindow(SW_SHOWNOACTIVATE);
+        RedrawWindow(nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+        const auto captureClient = [this, &require](CImage& capture) {
+            CRect bounds;
+            GetClientRect(&bounds);
+            if (!capture.IsNull()) {
+                capture.Destroy();
+            }
+            const HRESULT created = capture.Create(bounds.Width(), bounds.Height(), 32);
+            require(SUCCEEDED(created),
+                    (std::string("无法创建连续缩放像素检查位图，宽高=") +
+                     std::to_string(bounds.Width()) + "," + std::to_string(bounds.Height()) +
+                     "，结果=" + std::to_string(static_cast<long>(created))).c_str());
+            CDC* source = GetDC();
+            CDC* target = CDC::FromHandle(capture.GetDC());
+            const BOOL copied = target->BitBlt(0, 0, bounds.Width(), bounds.Height(), source, 0, 0, SRCCOPY);
+            capture.ReleaseDC();
+            ReleaseDC(source);
+            require(copied != FALSE, "无法读取连续缩放后的实际窗口像素");
+        };
+        const auto requireWhite = [&require](const CImage& capture, const CRect& area, const char* name) {
+            for (int y = area.top; y < area.bottom; ++y) {
+                for (int x = area.left; x < area.right; ++x) {
+                    require(capture.GetPixel(x, y) == RGB(255, 255, 255),
+                            (std::string("连续缩放后残留旧像素，区域=") + name +
+                             "，坐标=" + std::to_string(x) + "," + std::to_string(y) +
+                             "，分组绘制/擦除=" + std::to_string(groupPaintCount) + "/" +
+                             std::to_string(groupEraseCount)).c_str());
+                }
+            }
+        };
+        CImage resized;
+        groupPaintCount = 0;
+        groupEraseCount = 0;
+        for (int step = 0; step < 12; ++step) {
+            SetWindowPos(nullptr, 0, 0, originalWindow.Width() + 240 - step * 18,
+                         originalWindow.Height() + 120 - step * 8,
+                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        captureClient(resized);
+        if (previewPath != nullptr && *previewPath != L'\0') {
+            resized.Save((std::wstring(previewPath) + L".resize-pixels.png").c_str());
+        }
+        const CRect angle = controlRect(IDC_ANGLE_TITLE);
+        const CRect angleEdit = controlRect(IDC_ANGLE_MIN);
+        requireWhite(resized, CRect(angle.left + 8, angleEdit.bottom + 4,
+                                    angle.right - 8, angle.bottom - 8), "角度分组下部");
+        const CRect stepEdit = controlRect(IDC_ANGLE_STEP);
+        requireWhite(resized, CRect(stepEdit.left + 8, stepEdit.bottom - 5,
+                                    stepEdit.right - 8, stepEdit.bottom - 3), "角度步进输入框底部");
+        showInspectorPage(1);
+        for (int step = 0; step < 12; ++step) {
+            SetWindowPos(nullptr, 0, 0, originalWindow.Width() - step * 8,
+                         originalWindow.Height() + 72 - step * 6,
+                         SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+        captureClient(resized);
+        if (previewPath != nullptr && *previewPath != L'\0') {
+            resized.Save((std::wstring(previewPath) + L".batch-resize-pixels.png").c_str());
+        }
+        const CRect settings = controlRect(IDC_BATCH_SETTINGS_TITLE);
+        const CRect settingsHint = controlRect(IDC_BATCH_SETTINGS_HINT);
+        requireWhite(resized, CRect(settings.right - 24, settingsHint.top + 2,
+                                    settings.right - 8, settingsHint.bottom - 2), "批量设置说明右侧");
+        const CRect batchEdit = controlRect(IDC_BATCH_THREADS);
+        requireWhite(resized, CRect(batchEdit.left + 8, batchEdit.bottom - 5,
+                                    batchEdit.right - 8, batchEdit.bottom - 3), "批量线程输入框底部");
+        std::string interactionFailures;
+        const auto checkInteraction = [&interactionFailures](bool condition, const std::string& message) {
+            if (!condition && interactionFailures.size() < 3000) {
+                interactionFailures += message + "\n";
+            }
+        };
+        const auto checkEditFrames = [this, &controlRect, &checkInteraction](
+            const CImage& capture, const std::vector<int>& ids) {
+            const auto darkPixel = [&capture](int x, int y) {
+                const COLORREF pixel = capture.GetPixel(x, y);
+                return GetRValue(pixel) < 220 && GetGValue(pixel) < 220 && GetBValue(pixel) < 220;
+            };
+            for (int id : ids) {
+                const CRect rect = controlRect(id);
+                bool edges[4] = {};
+                for (int x = rect.left + 1; x < rect.right - 1; ++x) {
+                    edges[0] = edges[0] || darkPixel(x, rect.top);
+                    edges[1] = edges[1] || darkPixel(x, rect.bottom - 1);
+                }
+                for (int y = rect.top + 1; y < rect.bottom - 1; ++y) {
+                    edges[2] = edges[2] || darkPixel(rect.left, y);
+                    edges[3] = edges[3] || darkPixel(rect.right - 1, y);
+                }
+                checkInteraction(edges[0] && edges[1] && edges[2] && edges[3],
+                    "输入框四边没有完整显示，ID=" + std::to_string(id) +
+                    "，上下左右=" + std::to_string(edges[0]) + std::to_string(edges[1]) +
+                    std::to_string(edges[2]) + std::to_string(edges[3]) +
+                    "，矩形=" + std::to_string(rect.left) + "," + std::to_string(rect.top) +
+                    "," + std::to_string(rect.right) + "," + std::to_string(rect.bottom));
+            }
+        };
+        checkEditFrames(resized, { IDC_BATCH_PATH, IDC_BATCH_COUNT, IDC_BATCH_THREADS });
+        showInspectorPage(0);
+        RedrawWindow(nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_FRAME);
+        captureClient(resized);
+        checkEditFrames(resized, { IDC_ANGLE_MIN, IDC_ANGLE_MAX, IDC_ANGLE_STEP,
+            IDC_SCALE_MIN, IDC_SCALE_MAX, IDC_SCALE_STEP, IDC_PYRAMID, IDC_MIN_SCORE,
+            IDC_MAX_RESULTS, IDC_X_VICINITY, IDC_Y_VICINITY });
+        CRect dropped;
+        const LRESULT droppedMeasured = subpixelCombo_.SendMessage(
+            CB_GETDROPPEDCONTROLRECT, 0, reinterpret_cast<LPARAM>(&dropped));
+        const int itemHeight = static_cast<int>(subpixelCombo_.SendMessage(CB_GETITEMHEIGHT, 0, 0));
+        checkInteraction(droppedMeasured != 0 && dropped.Height() >= itemHeight * 4,
+            "亚像素下拉区域不足四项，实际高=" + std::to_string(dropped.Height()) +
+            "，单项高=" + std::to_string(itemHeight));
+        subpixelCombo_.SendMessage(CB_SHOWDROPDOWN, TRUE, 0);
+        checkInteraction(subpixelCombo_.SendMessage(CB_GETDROPPEDSTATE, 0, 0) != FALSE,
+                         "亚像素下拉菜单不能进入展开状态");
+        COMBOBOXINFO popup = { sizeof(COMBOBOXINFO) };
+        require(::GetComboBoxInfo(subpixelCombo_.GetSafeHwnd(), &popup) != FALSE,
+                "无法读取亚像素原生弹出列表");
+        CRect popupRect;
+        ::GetWindowRect(popup.hwndList, &popupRect);
+        checkInteraction(popup.hwndList != nullptr && ::IsWindowVisible(popup.hwndList) &&
+                         popupRect.Height() >= itemHeight * 4,
+                         "亚像素原生弹出列表不可见或高度不足");
+        if (previewPath != nullptr && *previewPath != L'\0') {
+            CImage popupCapture;
+            require(SUCCEEDED(popupCapture.Create(popupRect.Width(), popupRect.Height(), 32)),
+                    "无法创建亚像素弹出列表截图");
+            HDC source = ::GetDC(popup.hwndList);
+            CDC* target = CDC::FromHandle(popupCapture.GetDC());
+            target->BitBlt(0, 0, popupRect.Width(), popupRect.Height(),
+                           CDC::FromHandle(source), 0, 0, SRCCOPY);
+            popupCapture.ReleaseDC();
+            ::ReleaseDC(popup.hwndList, source);
+            popupCapture.Save((std::wstring(previewPath) + L".dropdown.png").c_str());
+        }
+        subpixelCombo_.SendMessage(CB_SHOWDROPDOWN, FALSE, 0);
+        const auto checkImageClip = [&controlRect, &checkInteraction](
+            const CImage& capture, int id, const char* name) {
+            const CRect view = controlRect(id);
+            for (int x = view.left + 4; x < view.right - 4; ++x) {
+                for (int offset = 1; offset <= 3; ++offset) {
+                    checkInteraction(capture.GetPixel(x, view.top - offset) == RGB(255, 255, 255) &&
+                                     capture.GetPixel(x, view.bottom - 1 + offset) == RGB(255, 255, 255),
+                                     std::string(name) + "越出上下边界");
+                }
+            }
+            for (int y = view.top + 4; y < view.bottom - 4; ++y) {
+                for (int offset = 1; offset <= 3; ++offset) {
+                    checkInteraction(capture.GetPixel(view.left - offset, y) == RGB(255, 255, 255) &&
+                                     capture.GetPixel(view.right - 1 + offset, y) == RGB(255, 255, 255),
+                                     std::string(name) + "越出左右边界");
+                }
+            }
+        };
+        LocatorResult zoomResult = {};
+        zoomResult.x = 58.0;
+        zoomResult.y = 58.0;
+        zoomResult.scale = 1.0;
+        zoomResult.score = 100.0;
+        searchView_.setResults({ zoomResult }, modelImage_.cols, modelImage_.rows);
+        for (CImageViewControl* view : { &searchView_, &templateView_ }) {
+            CRect viewClient;
+            view->GetClientRect(&viewClient);
+            CPoint center(viewClient.Width() / 2, viewClient.Height() / 2);
+            view->ClientToScreen(&center);
+            view->SendMessage(WM_MOUSEWHEEL, MAKEWPARAM(0, 120),
+                              MAKELPARAM(center.x, center.y));
+        }
+        RedrawWindow(nullptr, nullptr,
+                     RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_FRAME);
+        captureClient(resized);
+        if (previewPath != nullptr && *previewPath != L'\0') {
+            resized.Save((std::wstring(previewPath) + L".zoom-clipping.png").c_str());
+        }
+        checkImageClip(resized, IDC_SEARCH_VIEW, "搜索图及叠加");
+        checkImageClip(resized, IDC_TEMPLATE_VIEW, "模板");
+        searchView_.resetView();
+        templateView_.resetView();
+        require(interactionFailures.empty(), interactionFailures.c_str());
+        SetWindowPos(nullptr, 0, 0, originalWindow.Width(), originalWindow.Height(),
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        ShowWindow(SW_HIDE);
+    }
     const CRect originalSearch = controlRect(IDC_SEARCH_VIEW);
     const CRect originalResults = controlRect(IDC_RESULT_LIST);
     const CRect originalParameters = controlRect(IDC_PANEL_PARAMETERS);
@@ -2460,6 +2721,11 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     require(batchStats_.GetItemText(0, 1) == L"197 / 197" &&
             batchStats_.GetItemText(1, 1) == L"197 / 0 / 0",
             "对话框批量三态统计不正确");
+    require(batchPairCount_ == 197 && batchStats_.GetItemCount() == 7,
+            "批量目录扫描没有记录实际配对数");
+    CString directoryHint;
+    GetDlgItemText(IDC_BATCH_SETTINGS_HINT, directoryHint);
+    require(directoryHint.Find(L"197") >= 0, "批量目录说明未显示实际配对数");
     CComboBox* filter = static_cast<CComboBox*>(GetDlgItem(IDC_BATCH_FILTER));
     int successRows = 0;
     for (const BatchResult& result : batchResultData_) {
@@ -2484,39 +2750,99 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     SendMessage(WM_COMMAND, MAKEWPARAM(IDC_BATCH_FILTER, CBN_SELCHANGE),
                 reinterpret_cast<LPARAM>(filter->GetSafeHwnd()));
     require(resultsList_.GetItemCount() == successRows, "恢复全部筛选后结果数量错误");
-    require(GetDlgItem(IDC_BATCH_EXPORT) != nullptr &&
-            GetDlgItem(IDC_BATCH_EXPORT)->IsWindowEnabled(),
-            "批量完成后未提供结果导出");
+    wchar_t absoluteDirectory[MAX_PATH] = {};
+    require(GetFullPathNameW(CA2W(directory.c_str(), CP_ACP), MAX_PATH,
+                             absoluteDirectory, nullptr) > 0,
+            "无法生成批量联动测试的绝对预期路径");
+    const std::vector<ThickPair> reviewPairs = findThickPairs(
+        std::string(CW2A(absoluteDirectory, CP_ACP)));
+    const auto findBatchRow = [this](int task, int match) {
+        for (int row = 0; row < resultsList_.GetItemCount(); ++row) {
+            if (resultsList_.GetItemText(row, 0) == CString(std::to_wstring(task).c_str()) &&
+                resultsList_.GetItemText(row, 2) == CString(std::to_wstring(match).c_str())) {
+                return row;
+            }
+        }
+        return -1;
+    };
+    const auto selectBatchRow = [this, &require](int row) {
+        require(row >= 0, "批量测试缺少指定任务和匹配序号的结果行");
+        resultsList_.SetItemState(row, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+        require((resultsList_.GetItemState(row, LVIS_SELECTED) & LVIS_SELECTED) != 0,
+                "实际列表控件没有选中批量结果行");
+    };
+    selectBatchRow(findBatchRow(0, 1));
+    require(searchView_.hasResults() && searchView_.selectedResult() == 0,
+            "点击批量成功行后没有显示对应匹配框");
+    selectBatchRow(findBatchRow(1, 1));
+    cv::Mat expectedReviewSearch;
+    cv::Mat expectedReviewModel;
+    require(loadGrayImage(reviewPairs[1].searchPath, expectedReviewSearch) &&
+            loadGrayImage(reviewPairs[1].kernelPath, expectedReviewModel),
+            "无法读取批量联动预期图片");
+    CString reviewedSearchPath;
+    CString reviewedModelPath;
+    GetDlgItemText(IDC_SEARCH_PATH, reviewedSearchPath);
+    GetDlgItemText(IDC_TEMPLATE_PATH, reviewedModelPath);
+    require(searchImage_.size() == expectedReviewSearch.size() &&
+            modelImage_.size() == expectedReviewModel.size() &&
+            cv::countNonZero(searchImage_ != expectedReviewSearch) == 0 &&
+            cv::countNonZero(modelImage_ != expectedReviewModel) == 0 &&
+            reviewedSearchPath == CString(CA2W(reviewPairs[1].searchPath.c_str(), CP_ACP)) &&
+            reviewedModelPath == CString(CA2W(reviewPairs[1].kernelPath.c_str(), CP_ACP)) &&
+            searchView_.hasResults() && searchView_.selectedResult() == 0 &&
+            searchView_.selectedRect() == cv::Rect(10, 10, 100, 100),
+            "批量行没有恢复对应图片、路径、ROI 或匹配项");
+    int multipleRow = -1;
+    for (int row = 0; row < resultsList_.GetItemCount(); ++row) {
+        if (resultsList_.GetItemText(row, 2) == L"2") {
+            multipleRow = row;
+            break;
+        }
+    }
+    selectBatchRow(multipleRow);
+    require(searchView_.selectedResult() == 1,
+            "批量结果行没有高亮行内第二个匹配项");
+    const std::vector<BatchResult> successfulBatch = batchResultData_;
+    batchResultData_.resize(2);
+    batchResultData_[0] = BatchResult();
+    batchResultData_[0].id = 0;
+    batchResultData_[0].error = LocatorError::Ok;
+    batchResultData_[1] = BatchResult();
+    batchResultData_[1].id = 1;
+    batchResultData_[1].error = LocatorError::InvalidImage;
+    filter->SetCurSel(2);
+    SendMessage(WM_COMMAND, MAKEWPARAM(IDC_BATCH_FILTER, CBN_SELCHANGE),
+                reinterpret_cast<LPARAM>(filter->GetSafeHwnd()));
+    selectBatchRow(0);
+    GetDlgItemText(IDC_SEARCH_PATH, reviewedSearchPath);
+    require(!searchView_.hasResults() && searchView_.selectedResult() == -1 &&
+            reviewedSearchPath == CString(CA2W(reviewPairs[0].searchPath.c_str(), CP_ACP)) &&
+            cv::countNonZero(searchImage_ != search) == 0,
+            "无匹配批量行没有切换图片或仍保留旧匹配框");
+    if (previewPath != nullptr && *previewPath != L'\0') {
+        const std::wstring path = std::wstring(previewPath) + L".batch-no-match.png";
+        savePreview(path.c_str());
+    }
+    filter->SetCurSel(3);
+    SendMessage(WM_COMMAND, MAKEWPARAM(IDC_BATCH_FILTER, CBN_SELCHANGE),
+                reinterpret_cast<LPARAM>(filter->GetSafeHwnd()));
+    selectBatchRow(0);
+    require(!searchView_.hasResults() &&
+            cv::countNonZero(searchImage_ != expectedReviewSearch) == 0,
+            "错误批量行没有显示对应图片或仍保留旧匹配框");
+    batchResultData_ = successfulBatch;
+    filter->SetCurSel(0);
+    SendMessage(WM_COMMAND, MAKEWPARAM(IDC_BATCH_FILTER, CBN_SELCHANGE),
+                reinterpret_cast<LPARAM>(filter->GetSafeHwnd()));
+    selectBatchRow(findBatchRow(0, 1));
     if (previewPath != nullptr && *previewPath != L'\0') {
         showInspectorPage(1);
         const std::wstring batchPreview = std::wstring(previewPath) + L".batch.png";
         savePreview(batchPreview.c_str());
+        const std::wstring selectionPreview = std::wstring(previewPath) + L".batch-selection.png";
+        savePreview(selectionPreview.c_str());
         showInspectorPage(0);
-    }
-    OnBatchBenchmark();
-    CString benchmarkStatus;
-    GetDlgItemText(IDC_STATUS_TEXT, benchmarkStatus);
-    const std::string benchmarkDetail = "有效=" + std::to_string(hasBenchmark_) +
-        "，预热=" + std::to_string(benchmarkData_.warmupMs.size()) +
-        "，记录=" + std::to_string(benchmarkData_.roundMs.size()) +
-        "，任务=" + std::to_string(benchmarkData_.taskCount) +
-        "，图像对=" + std::to_string(benchmarkData_.pairCount) +
-        "，结果=" + std::to_string(benchmarkData_.finalRun.results.size()) + "，状态=" +
-        std::string(CT2A(benchmarkStatus.GetString(), CP_UTF8));
-    require(hasBenchmark_ && benchmarkData_.warmupMs.size() == 5 &&
-            benchmarkData_.roundMs.size() == 50 && benchmarkData_.taskCount == 500 &&
-            benchmarkData_.pairCount == 197 && benchmarkData_.finalRun.results.size() == 500,
-            (std::string("界面固定基准没有按 5 轮预热、50 轮记录执行 500 任务，") +
-             benchmarkDetail).c_str());
-    require(batchStats_.GetItemText(0, 1) == L"500 / 500" &&
-            batchStats_.GetItemText(6, 0) == L"50 轮中位数" &&
-            GetDlgItem(IDC_BENCHMARK_EXPORT)->IsWindowEnabled(),
-            "界面固定基准统计或原始耗时导出入口错误");
-    LocatorWorkflow::exportBenchmarkCsv(backend == LocatorBackend::Gpu
-        ? "temp/t34_gpu_benchmark.csv" : "temp/t34_cpu_benchmark.csv", benchmarkData_);
-    if (previewPath != nullptr && *previewPath != L'\0') {
-        const std::wstring benchmarkPreview = std::wstring(previewPath) + L".benchmark.png";
-        savePreview(benchmarkPreview.c_str());
     }
     SetDlgItemText(IDC_BATCH_COUNT, L"500");
     OnBatchRun();

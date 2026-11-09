@@ -332,6 +332,7 @@ void CImageViewControl::OnPaint()
     CRect client;
     GetClientRect(&client);
     dc.FillSolidRect(client, RGB(24, 26, 28));
+    dc.IntersectClipRect(client);
     updateBitmapRect();
     if (image_.empty()) {
         labelRects_.clear();

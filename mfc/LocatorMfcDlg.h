@@ -11,10 +11,13 @@
 
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
+
+struct BatchReviewData;
 
 class CLocatorMfcDlg : public CDialogEx {
 public:
@@ -29,7 +32,6 @@ protected:
     afx_msg void OnLoadTemplate();
     afx_msg void OnSelectRoi();
     afx_msg void OnClearRoi();
-    afx_msg void OnApplyRoi();
     afx_msg void OnReset();
     afx_msg void OnParameterChanged(UINT id);
     afx_msg void OnChoiceChanged();
@@ -37,9 +39,6 @@ protected:
     afx_msg void OnBatchBrowse();
     afx_msg void OnBatchRun();
     afx_msg void OnBatchCancel();
-    afx_msg void OnBatchExport();
-    afx_msg void OnBatchBenchmark();
-    afx_msg void OnBenchmarkExport();
     afx_msg void OnBatchFilterChanged();
     afx_msg void OnModeTabsChanged(NMHDR* header, LRESULT* result);
     afx_msg void OnResultItemChanged(NMHDR* header, LRESULT* result);
@@ -48,6 +47,7 @@ protected:
     afx_msg LRESULT OnSingleComplete(WPARAM wParam, LPARAM lParam);
     afx_msg LRESULT OnBatchProgress(WPARAM wParam, LPARAM lParam);
     afx_msg LRESULT OnBatchComplete(WPARAM wParam, LPARAM lParam);
+    afx_msg LRESULT OnDirectoryScanned(WPARAM wParam, LPARAM lParam);
     afx_msg LRESULT OnSelfTest(WPARAM wParam, LPARAM lParam);
     afx_msg void OnPaint();
     afx_msg BOOL OnEraseBkgnd(CDC* dc);
@@ -67,10 +67,15 @@ private:
         bool valid = false;
     };
 
+    struct BatchRow {
+        int taskId;
+        int matchIndex;
+    };
+
     bool readConfig(LocatorConfig& config, CString* diagnosis = nullptr, int* invalidControl = nullptr);
     void updateExecutionHint();
     void updateBatchHint();
-    void updateRoiFields();
+    void updateBatchDataHint(int requestedCount = -1);
     void writeConfig(const LocatorConfig& config);
     void captureBaseline();
     void setSingleControlsEnabled(bool enabled);
@@ -78,14 +83,14 @@ private:
     void showSingleResult(const LocatorWorkflow::SingleResult& run);
     void clearBatchResultDisplay();
     void showBatchResult(const LocatorWorkflow::BatchRun& run);
-    void showBenchmarkResult();
     void populateBatchResults();
+    void showBatchRow(int row);
     void prepareResultList(bool batch);
     void resizeResultColumns();
     void initializeLayout();
     void applyLayout();
     void showInspectorPage(int page);
-    void setBatchStats(const std::vector<CString>& values, bool benchmark = false);
+    void setBatchStats(const std::vector<CString>& values);
     void clearResultDisplay();
     void showError(LocatorError error);
     void savePreview(const wchar_t* path);
@@ -118,8 +123,9 @@ private:
     LocatorRect roi_ = { 0, 0, 0, 0 };
     std::vector<BatchResult> batchResultData_;
     std::vector<BatchResult> displayedBatchResults_;
-    LocatorWorkflow::BenchmarkRun benchmarkData_;
-    bool hasBenchmark_ = false;
+    std::vector<BatchRow> batchRows_;
+    std::shared_ptr<BatchReviewData> batchReviewData_;
+    int batchPairCount_ = 0;
     std::thread singleWorker_;
     bool singleRunning_ = false;
     unsigned singleGeneration_ = 0;

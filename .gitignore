@@ -47,3 +47,7 @@ Desktop.ini
 
 # 临时试验、调试与隔离工作区
 temp/
+
+# 本地参考资料与测试数据，不纳入版本库
+reference/
+test_data/
