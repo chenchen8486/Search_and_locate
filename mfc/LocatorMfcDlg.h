@@ -2,6 +2,7 @@
 
 #include "ImageViewControl.h"
 #include "Locator.h"
+#include "LocatorWorkflow.h"
 
 #include <afxcmn.h>
 #include <afxdialogex.h>
@@ -10,6 +11,7 @@
 
 #include <functional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -35,6 +37,7 @@ protected:
     afx_msg void OnBatchRun();
     afx_msg void OnModeTabsChanged(NMHDR* header, LRESULT* result);
     afx_msg LRESULT OnImageSelectionChanged(WPARAM wParam, LPARAM lParam);
+    afx_msg LRESULT OnSingleComplete(WPARAM wParam, LPARAM lParam);
     afx_msg LRESULT OnSelfTest(WPARAM wParam, LPARAM lParam);
     afx_msg void OnPaint();
     afx_msg BOOL OnEraseBkgnd(CDC* dc);
@@ -42,6 +45,7 @@ protected:
     afx_msg void OnDrawItem(int controlId, LPDRAWITEMSTRUCT drawItem);
     afx_msg void OnSize(UINT type, int width, int height);
     afx_msg void OnGetMinMaxInfo(MINMAXINFO* info);
+    afx_msg void OnDestroy();
 
 private:
     struct SingleBaseline {
@@ -58,6 +62,8 @@ private:
     void updateRoiFields();
     void writeConfig(const LocatorConfig& config);
     void captureBaseline();
+    void setSingleControlsEnabled(bool enabled);
+    void showSingleResult(const LocatorWorkflow::SingleResult& run);
     void prepareResultList(bool batch);
     void resizeResultColumns();
     void initializeLayout();
@@ -93,6 +99,9 @@ private:
     bool batchResults_ = false;
     bool useRoi_ = false;
     LocatorRect roi_ = { 0, 0, 0, 0 };
+    std::thread singleWorker_;
+    bool singleRunning_ = false;
+    unsigned singleGeneration_ = 0;
     std::function<void()> selfTestAction_;
     std::string selfTestError_;
 

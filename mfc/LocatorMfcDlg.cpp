@@ -18,6 +18,12 @@
 namespace {
 
 constexpr UINT WM_LOCATOR_SELF_TEST = WM_APP + 202;
+constexpr UINT WM_LOCATOR_SINGLE_COMPLETE = WM_APP + 203;
+
+struct SingleCompletion {
+    unsigned generation = 0;
+    LocatorWorkflow::SingleResult run;
+};
 
 int dividerPaintCount = 0;
 int imagePaintCount = 0;
@@ -104,6 +110,8 @@ BEGIN_MESSAGE_MAP(CLocatorMfcDlg, CDialogEx)
     ON_NOTIFY(TCN_SELCHANGE, IDC_MODE_TABS, &CLocatorMfcDlg::OnModeTabsChanged)
     ON_MESSAGE(WM_IMAGE_SELECTION_CHANGED, &CLocatorMfcDlg::OnImageSelectionChanged)
     ON_MESSAGE(WM_LOCATOR_SELF_TEST, &CLocatorMfcDlg::OnSelfTest)
+    ON_MESSAGE(WM_LOCATOR_SINGLE_COMPLETE, &CLocatorMfcDlg::OnSingleComplete)
+    ON_WM_DESTROY()
     ON_WM_PAINT()
     ON_WM_ERASEBKGND()
     ON_WM_CTLCOLOR()
@@ -890,31 +898,68 @@ void CLocatorMfcDlg::showError(LocatorError error)
     AfxMessageBox(message);
 }
 
+void CLocatorMfcDlg::setSingleControlsEnabled(bool enabled)
+{
+    const int ids[] = {
+        IDC_LOAD_SEARCH, IDC_LOAD_TEMPLATE, IDC_SELECT_ROI, IDC_CLEAR_ROI, IDC_APPLY_ROI,
+        IDC_EXECUTE, IDC_ANGLE_MIN, IDC_ANGLE_MAX, IDC_ANGLE_STEP, IDC_SCALE_MIN,
+        IDC_SCALE_MAX, IDC_SCALE_STEP, IDC_PYRAMID, IDC_SUBPIXEL, IDC_MIN_SCORE,
+        IDC_MAX_RESULTS, IDC_X_VICINITY, IDC_Y_VICINITY, IDC_BACKEND,
+        IDC_ROI_X, IDC_ROI_Y, IDC_ROI_WIDTH, IDC_ROI_HEIGHT
+    };
+    for (int id : ids) {
+        GetDlgItem(id)->EnableWindow(enabled);
+    }
+    GetDlgItem(IDC_RESET)->EnableWindow(enabled && baseline_.valid);
+}
+
 void CLocatorMfcDlg::OnExecute()
 {
-    if (searchImage_.empty() || modelImage_.empty()) {
-        AfxMessageBox(L"请先加载搜索图和模板");
+    if (singleRunning_) {
         return;
     }
-
+    if (searchImage_.empty() || modelImage_.empty()) {
+        SetDlgItemText(IDC_STATUS_TEXT, L"请先加载搜索图和模板");
+        return;
+    }
     LocatorConfig config;
     if (!readConfig(config)) {
-        AfxMessageBox(L"参数格式无效，请检查所有数值输入");
+        SetDlgItemText(IDC_STATUS_TEXT, L"参数格式无效，请检查所有数值输入");
         return;
     }
     config.useRoi = useRoi_;
-    if (useRoi_) {
-        config.roi = roi_;
+    config.roi = roi_;
+    const cv::Mat model = modelImage_.clone();
+    const cv::Mat search = searchImage_.clone();
+    const unsigned generation = ++singleGeneration_;
+    singleRunning_ = true;
+    setSingleControlsEnabled(false);
+    SetDlgItemText(IDC_STATUS_TEXT, L"正在后台搜索，可调整窗口或切换页签");
+    try {
+        singleWorker_ = std::thread([this, model, search, config, generation]() {
+            SingleCompletion* completion = new SingleCompletion;
+            completion->generation = generation;
+            completion->run = LocatorWorkflow::runSingle(model, search, config);
+            if (!PostMessage(WM_LOCATOR_SINGLE_COMPLETE, 0,
+                             reinterpret_cast<LPARAM>(completion))) {
+                delete completion;
+            }
+        });
+    } catch (const std::exception& error) {
+        singleRunning_ = false;
+        setSingleControlsEnabled(true);
+        const CString message(CA2W(error.what(), CP_UTF8));
+        SetDlgItemText(IDC_STATUS_TEXT, L"无法启动单次搜索：" + message);
     }
+}
 
-    const LocatorWorkflow::SingleResult run =
-        LocatorWorkflow::runSingle(modelImage_, searchImage_, config);
+void CLocatorMfcDlg::showSingleResult(const LocatorWorkflow::SingleResult& run)
+{
     if (run.error != LocatorError::Ok) {
         showError(run.error);
         return;
     }
     const std::vector<LocatorResult>& results = run.matches;
-
     prepareResultList(false);
     for (size_t i = 0; i < results.size(); ++i) {
         const LocatorResult& result = results[i];
@@ -931,14 +976,40 @@ void CLocatorMfcDlg::OnExecute()
         resultsList_.SetItemText(row, 4, value);
     }
     searchView_.setResults(results, modelImage_.cols, modelImage_.rows);
-
-    const double preprocessMs = run.preprocessMs;
-    const double searchMs = run.searchMs;
-    const double totalMs = run.totalMs;
     CString status;
     status.Format(L"预处理 %.3f ms，搜索 %.3f ms，整体 %.3f ms，共 %d 个结果",
-                  preprocessMs, searchMs, totalMs, static_cast<int>(results.size()));
+                  run.preprocessMs, run.searchMs, run.totalMs, static_cast<int>(results.size()));
     SetDlgItemText(IDC_STATUS_TEXT, status);
+}
+
+LRESULT CLocatorMfcDlg::OnSingleComplete(WPARAM wParam, LPARAM lParam)
+{
+    (void)wParam;
+    SingleCompletion* completion = reinterpret_cast<SingleCompletion*>(lParam);
+    if (completion == nullptr) {
+        return 0;
+    }
+    const bool current = completion->generation == singleGeneration_;
+    singleRunning_ = false;
+    if (singleWorker_.joinable()) {
+        singleWorker_.join();
+    }
+    setSingleControlsEnabled(true);
+    if (current) {
+        showSingleResult(completion->run);
+    }
+    delete completion;
+    return 0;
+}
+
+void CLocatorMfcDlg::OnDestroy()
+{
+    ++singleGeneration_;
+    if (singleWorker_.joinable()) {
+        singleWorker_.join();
+    }
+    singleRunning_ = false;
+    CDialogEx::OnDestroy();
 }
 
 
@@ -1571,6 +1642,22 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     expectedFields[3].Format(L"%.4f", expected.matches[0].scale);
     expectedFields[4].Format(L"%.2f", expected.matches[0].score);
     OnExecute();
+    require(!GetDlgItem(IDC_EXECUTE)->IsWindowEnabled() &&
+            !GetDlgItem(IDC_LOAD_SEARCH)->IsWindowEnabled() &&
+            !GetDlgItem(IDC_RESET)->IsWindowEnabled(),
+            "单次搜索期间未限制重复搜索、加载和复位");
+    showInspectorPage(1);
+    showInspectorPage(0);
+    const DWORD waitStart = GetTickCount();
+    while (!GetDlgItem(IDC_EXECUTE)->IsWindowEnabled()) {
+        require(GetTickCount() - waitStart < 30000, "等待单次后台搜索超时");
+        MSG message;
+        while (PeekMessage(&message, nullptr, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&message);
+            DispatchMessage(&message);
+        }
+        Sleep(1);
+    }
     require(resultsList_.GetItemCount() == static_cast<int>(expected.matches.size()) &&
             searchView_.hasResults(), "对话框单次结果数量或叠加数据与核心不一致");
     if (resultsList_.GetItemText(0, 0) != expectedFields[0] ||
