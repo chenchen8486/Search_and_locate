@@ -10,6 +10,7 @@ constexpr double kPi = 3.14159265358979323846;
 BEGIN_MESSAGE_MAP(CImageViewControl, CWnd)
     ON_WM_PAINT()
     ON_WM_ERASEBKGND()
+    ON_WM_SIZE()
     ON_WM_LBUTTONDOWN()
     ON_WM_MOUSEMOVE()
     ON_WM_LBUTTONUP()
@@ -60,6 +61,15 @@ BOOL CImageViewControl::OnEraseBkgnd(CDC* dc)
 {
     (void)dc;
     return TRUE;
+}
+
+void CImageViewControl::OnSize(UINT type, int width, int height)
+{
+    CWnd::OnSize(type, width, height);
+    if (type != SIZE_MINIMIZED) {
+        Invalidate();
+        UpdateWindow();
+    }
 }
 
 bool CImageViewControl::pointToImage(CPoint point, int& x, int& y) const

@@ -1109,6 +1109,13 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     require(dividerPaintCount > 0 && imagePaintCount > 0,
             (std::string("布局后分割线和图像控件没有统一重绘，次数=") +
              std::to_string(dividerPaintCount) + "/" + std::to_string(imagePaintCount)).c_str());
+    CRect directView;
+    searchView_.GetWindowRect(&directView);
+    imagePaintCount = 0;
+    searchView_.SetWindowPos(nullptr, 0, 0, directView.Width() - 20, directView.Height(),
+                           SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    require(imagePaintCount > 0, "图像控件自身尺寸变化后没有重绘");
+    applyLayout();
     ShowWindow(SW_HIDE);
     const int searchControls[] = { IDC_ANGLE_MIN, IDC_SCALE_MIN, IDC_SUBPIXEL, IDC_EXECUTE };
     const int batchControls[] = { IDC_BATCH_PATH, IDC_BATCH_RUN, IDC_BATCH_STATS };
