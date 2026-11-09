@@ -232,7 +232,7 @@ void CLocatorMfcDlg::showInspectorPage(int page)
         IDC_BATCH_DIRECTORY_TITLE, IDC_BATCH_DIRECTORY_LABEL, IDC_BATCH_PATH,
         IDC_BATCH_BROWSE, IDC_BATCH_SETTINGS_TITLE, IDC_BATCH_SETTINGS_HINT,
         IDC_BATCH_COUNT_LABEL, IDC_BATCH_THREADS_LABEL, IDC_BATCH_COUNT,
-        IDC_BATCH_THREADS, IDC_BATCH_RUN, IDC_BATCH_STATS_TITLE, IDC_BATCH_STATS
+        IDC_BATCH_THREADS, IDC_BATCH_CONFIG_HINT, IDC_BATCH_RUN, IDC_BATCH_STATS_TITLE, IDC_BATCH_STATS
     };
     for (int id : searchIds) {
         GetDlgItem(id)->ShowWindow(page == 0 ? SW_SHOW : SW_HIDE);
@@ -436,10 +436,11 @@ void CLocatorMfcDlg::applyLayout()
     place(IDC_BATCH_COUNT, box(bodyX, bodyY + sy(192), batchFieldWidth, sy(32)));
     place(IDC_BATCH_THREADS, box(bodyX + batchFieldWidth + sx(8),
         bodyY + sy(192), batchFieldWidth, sy(32)));
-    place(IDC_BATCH_RUN, box(bodyX, bodyY + sy(240), bodyWidth, sy(36)));
-    place(IDC_BATCH_STATS_TITLE, box(bodyX, bodyY + sy(296), bodyWidth, sy(18)));
-    place(IDC_BATCH_STATS, box(bodyX, bodyY + sy(320), bodyWidth,
-        inspector.bottom - bodyY - sy(336)));
+    place(IDC_BATCH_CONFIG_HINT, box(bodyX, bodyY + sy(234), bodyWidth, sy(54)));
+    place(IDC_BATCH_RUN, box(bodyX, bodyY + sy(296), bodyWidth, sy(36)));
+    place(IDC_BATCH_STATS_TITLE, box(bodyX, bodyY + sy(352), bodyWidth, sy(18)));
+    place(IDC_BATCH_STATS, box(bodyX, bodyY + sy(376), bodyWidth,
+        inspector.bottom - bodyY - sy(392)));
     place(IDC_STATUS_TEXT, box(margin, height - sy(25), width - margin * 2, sy(19)));
 
     HDWP deferred = BeginDeferWindowPos(static_cast<int>(placements.size()));
@@ -540,7 +541,7 @@ HBRUSH CLocatorMfcDlg::OnCtlColor(CDC* dc, CWnd* wnd, UINT ctlColor)
                    id == IDC_IMAGE_META_TEMPLATE || id == IDC_PARAMETER_HINT ||
                    id == IDC_ANGLE_HINT || id == IDC_SCALE_HINT ||
                    id == IDC_BATCH_DIRECTORY_LABEL || id == IDC_BATCH_SETTINGS_HINT ||
-                   id == IDC_EXECUTION_HINT) {
+                   id == IDC_BATCH_CONFIG_HINT || id == IDC_EXECUTION_HINT) {
             dc->SetTextColor(RGB(99, 116, 135));
         } else {
             dc->SetTextColor(RGB(24, 37, 52));
@@ -800,6 +801,42 @@ void CLocatorMfcDlg::updateExecutionHint()
         range = L"搜索范围：完整图像";
     }
     SetDlgItemText(IDC_EXECUTION_HINT, angle + L"，" + scale + L"\n" + range);
+    updateBatchHint();
+}
+
+void CLocatorMfcDlg::updateBatchHint()
+{
+    LocatorConfig config;
+    if (!readConfig(config)) {
+        SetDlgItemText(IDC_BATCH_CONFIG_HINT, L"搜索参数待修正，请返回搜索参数页检查");
+        return;
+    }
+    CString angle;
+    CString scale;
+    if (config.angleMinDeg == config.angleMaxDeg) {
+        angle.Format(L"%g°", config.angleMinDeg);
+    } else {
+        angle.Format(L"%g～%g°，步进%g", config.angleMinDeg, config.angleMaxDeg, config.angleStepDeg);
+    }
+    if (config.scaleMin == config.scaleMax) {
+        scale.Format(L"%g", config.scaleMin);
+    } else {
+        scale.Format(L"%g～%g，步进%g", config.scaleMin, config.scaleMax, config.scaleStep);
+    }
+    CString roi;
+    if (useRoi_) {
+        roi.Format(L"ROI=(%d,%d,%d,%d)", roi_.x, roi_.y, roi_.width, roi_.height);
+    } else {
+        roi = L"完整图像";
+    }
+    CString summary;
+    summary.Format(L"后端=%s | 金字塔=%d | 亚像素=1/%d | 最低分=%g\n"
+                   L"角度=%s | 尺度=%s\nTop-N=%d | 去重=(%d,%d)px | %s",
+                   config.backend == LocatorBackend::Gpu ? L"GPU" : L"CPU",
+                   config.pyramidLevels, config.subPixelResolution, config.minScore,
+                   angle.GetString(), scale.GetString(), config.maxResults,
+                   config.xVicinity, config.yVicinity, roi.GetString());
+    SetDlgItemText(IDC_BATCH_CONFIG_HINT, summary);
 }
 
 void CLocatorMfcDlg::updateRoiFields()
@@ -1739,6 +1776,15 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     SetDlgItemInt(IDC_ROI_HEIGHT, 100);
     SendMessage(WM_COMMAND, MAKEWPARAM(IDC_APPLY_ROI, BN_CLICKED),
                 reinterpret_cast<LPARAM>(GetDlgItem(IDC_APPLY_ROI)->GetSafeHwnd()));
+    showInspectorPage(1);
+    CString batchConfigHint;
+    GetDlgItemText(IDC_BATCH_CONFIG_HINT, batchConfigHint);
+    require(batchConfigHint.Find(L"金字塔=2") >= 0 && batchConfigHint.Find(L"亚像素=1/4") >= 0 &&
+            batchConfigHint.Find(L"最低分=85") >= 0 && batchConfigHint.Find(L"Top-N=2") >= 0 &&
+            batchConfigHint.Find(L"去重=(2,3)") >= 0 &&
+            batchConfigHint.Find(L"ROI=(10,10,100,100)") >= 0,
+            "批量页没有完整显示实际生效配置");
+    showInspectorPage(0);
 
     LocatorConfig config;
     require(readConfig(config), "对话框参数格式读取失败");

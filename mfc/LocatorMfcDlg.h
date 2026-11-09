@@ -61,6 +61,7 @@ private:
 
     bool readConfig(LocatorConfig& config, CString* diagnosis = nullptr, int* invalidControl = nullptr);
     void updateExecutionHint();
+    void updateBatchHint();
     void updateRoiFields();
     void writeConfig(const LocatorConfig& config);
     void captureBaseline();
