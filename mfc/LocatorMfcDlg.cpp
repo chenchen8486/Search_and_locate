@@ -97,6 +97,9 @@ BEGIN_MESSAGE_MAP(CLocatorMfcDlg, CDialogEx)
     ON_BN_CLICKED(IDC_EXECUTE, &CLocatorMfcDlg::OnExecute)
     ON_BN_CLICKED(IDC_BATCH_BROWSE, &CLocatorMfcDlg::OnBatchBrowse)
     ON_BN_CLICKED(IDC_BATCH_RUN, &CLocatorMfcDlg::OnBatchRun)
+    ON_CONTROL_RANGE(EN_CHANGE, IDC_ANGLE_MIN, IDC_Y_VICINITY, &CLocatorMfcDlg::OnParameterChanged)
+    ON_CBN_SELCHANGE(IDC_BACKEND, &CLocatorMfcDlg::OnChoiceChanged)
+    ON_CBN_SELCHANGE(IDC_SUBPIXEL, &CLocatorMfcDlg::OnChoiceChanged)
     ON_NOTIFY(TCN_SELCHANGE, IDC_MODE_TABS, &CLocatorMfcDlg::OnModeTabsChanged)
     ON_MESSAGE(WM_IMAGE_SELECTION_CHANGED, &CLocatorMfcDlg::OnImageSelectionChanged)
     ON_MESSAGE(WM_LOCATOR_SELF_TEST, &CLocatorMfcDlg::OnSelfTest)
@@ -227,6 +230,7 @@ void CLocatorMfcDlg::showInspectorPage(int page)
         GetDlgItem(id)->ShowWindow(page == 1 ? SW_SHOW : SW_HIDE);
     }
     activeInspectorPage_ = page;
+    updateExecutionHint();
     if (modeTabs_.GetCurSel() != page) {
         modeTabs_.SetCurSel(page);
     }
@@ -390,7 +394,7 @@ void CLocatorMfcDlg::applyLayout()
     fieldRow(scaleLabels, scaleEdits, 206, 224, sectionShift * 2);
     fieldRow(precisionLabels, precisionEdits, 340, 358, sectionShift * 3);
     fieldRow(resultLabels, resultEdits, 400, 418, sectionShift * 3);
-    place(IDC_EXECUTION_HINT, box(bodyX, inspector.bottom - sy(76), bodyWidth, sy(18)));
+    place(IDC_EXECUTION_HINT, box(bodyX, inspector.bottom - sy(90), bodyWidth, sy(38)));
     place(IDC_EXECUTE, box(bodyX, inspector.bottom - sy(52), bodyWidth, sy(36)));
 
     place(IDC_BATCH_DIRECTORY_TITLE, box(bodyX, bodyY, bodyWidth, sy(18)));
@@ -677,6 +681,47 @@ LRESULT CLocatorMfcDlg::OnImageSelectionChanged(WPARAM wParam, LPARAM lParam)
     SetDlgItemText(IDC_STATUS_TEXT, CString(L"ROI 已设置"));
     searchView_.setSelectionEnabled(false);
     return 0;
+}
+
+void CLocatorMfcDlg::OnParameterChanged(UINT id)
+{
+    (void)id;
+    updateExecutionHint();
+}
+
+void CLocatorMfcDlg::OnChoiceChanged()
+{
+    updateExecutionHint();
+}
+
+void CLocatorMfcDlg::updateExecutionHint()
+{
+    LocatorConfig config;
+    if (!readConfig(config)) {
+        SetDlgItemText(IDC_EXECUTION_HINT, L"参数待修正，请检查数值格式");
+        return;
+    }
+    CString angle;
+    if (config.angleMinDeg == config.angleMaxDeg) {
+        angle.Format(L"角度 %.6g°", config.angleMinDeg);
+    } else {
+        angle.Format(L"角度 %.6g～%.6g°（步进 %.6g°）", config.angleMinDeg,
+                     config.angleMaxDeg, config.angleStepDeg);
+    }
+    CString scale;
+    if (config.scaleMin == config.scaleMax) {
+        scale.Format(L"尺度 %.6g", config.scaleMin);
+    } else {
+        scale.Format(L"尺度 %.6g～%.6g（步进 %.6g）", config.scaleMin,
+                     config.scaleMax, config.scaleStep);
+    }
+    CString range;
+    if (useRoi_) {
+        range.Format(L"ROI：x=%d，y=%d，宽=%d，高=%d", roi_.x, roi_.y, roi_.width, roi_.height);
+    } else {
+        range = L"搜索范围：完整图像";
+    }
+    SetDlgItemText(IDC_EXECUTION_HINT, angle + L"，" + scale + L"\n" + range);
 }
 
 void CLocatorMfcDlg::writeConfig(const LocatorConfig& config)
@@ -987,6 +1032,7 @@ void CLocatorMfcDlg::clearResultDisplay()
 {
     resultsList_.DeleteAllItems();
     searchView_.setResults({}, modelImage_.cols, modelImage_.rows);
+    updateExecutionHint();
 }
 
 void CLocatorMfcDlg::savePreview(const wchar_t* path)
@@ -1411,6 +1457,13 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
     SetDlgItemText(IDC_Y_VICINITY, L"3");
     useRoi_ = true;
     roi_ = { 10, 10, 100, 100 };
+    showInspectorPage(0);
+    CString executionSummary;
+    GetDlgItemText(IDC_EXECUTION_HINT, executionSummary);
+    require(executionSummary.Find(L"-2") >= 0 && executionSummary.Find(L"1") >= 0 &&
+            executionSummary.Find(L"0.9") >= 0 && executionSummary.Find(L"1.05") >= 0 &&
+            executionSummary.Find(L"10") >= 0 && executionSummary.Find(L"100") >= 0,
+            "执行摘要没有反映实际角度、尺度和 ROI");
 
     LocatorConfig config;
     require(readConfig(config), "对话框参数格式读取失败");
