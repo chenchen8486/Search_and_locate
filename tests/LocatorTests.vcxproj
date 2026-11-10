@@ -112,6 +112,6 @@
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
-    <Import Project="$(CudaTargetsPath)" Condition="'$(EnableCuda)' == 'true'" />
+    <Import Project="..\tools\Cuda.targets" />
   </ImportGroup>
 </Project>
