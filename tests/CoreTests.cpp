@@ -739,6 +739,24 @@ void testSubPixelPreparedSamples()
                    "亚像素预备评分与原双精度计算不完全一致，索引 " + std::to_string(index));
         }
     }
+
+    LocatorConfig config;
+    config.subPixelResolution = 4;
+    const std::vector<TransformSearch::TransformModel> transformed =
+        TransformSearch::makeTransformModels(model, config);
+    expect(transformed.size() == 1, "固定角度尺度应生成一个变换模板");
+    const std::vector<TransformSearch::SubpixelSample>& cached = transformed[0].subpixelSamples;
+    expect(cached.size() == 25, "建模阶段应预生成 25 个四分之一像素样本");
+    const std::vector<TransformSearch::SubpixelSample> expected =
+        TransformSearch::makeSubpixelSamples(model, 4);
+    for (size_t index = 0; index < cached.size(); ++index) {
+        expect(cv::norm(cached[index].image, expected[index].image, cv::NORM_INF) == 0.0 &&
+               cached[index].sum == expected[index].sum &&
+               cached[index].squares == expected[index].squares &&
+               cached[index].offsetX == expected[index].offsetX &&
+               cached[index].offsetY == expected[index].offsetY,
+               "缓存的亚像素样本、统计或偏移错误，索引 " + std::to_string(index));
+    }
 }
 
 void testNccSameSizeMatch()

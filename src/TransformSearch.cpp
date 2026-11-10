@@ -92,6 +92,7 @@ std::vector<TransformModel> makeAngleModels(const cv::Mat& model, const LocatorC
     std::vector<TransformModel> models;
     for (double angle : generateAngles(config)) {
         models.push_back(rotateModel(model, angle, 1.0));
+        models.back().nccStats = NccMatcher::prepareModelStats(models.back().image);
     }
     return models;
 }
@@ -115,6 +116,9 @@ std::vector<TransformModel> makeTransformModels(const cv::Mat& model, const Loca
         }
         for (double angle : angles) {
             models.push_back(rotateModel(scaled, angle, scale));
+            models.back().subpixelSamples =
+                makeSubpixelSamples(models.back().image, config.subPixelResolution);
+            models.back().nccStats = NccMatcher::prepareModelStats(models.back().image);
         }
     }
     return models;
@@ -313,7 +317,13 @@ void appendModelCandidates(const TransformModel& model, const cv::Mat& search,
         offsets.push_back(static_cast<double>(step) / resolution);
     }
 
-    const std::vector<SubpixelSample> sampledModels = makeSubpixelSamples(model.image, resolution);
+    std::vector<SubpixelSample> generatedSamples;
+    const std::vector<SubpixelSample>* cachedSamples = &model.subpixelSamples;
+    if (cachedSamples->empty()) {
+        generatedSamples = makeSubpixelSamples(model.image, resolution);
+        cachedSamples = &generatedSamples;
+    }
+    const std::vector<SubpixelSample>& sampledModels = *cachedSamples;
     std::vector<Candidate> coarseCandidates;
     for (int y = 0; y < response.rows; ++y) {
         for (int x = 0; x < response.cols; ++x) {
@@ -390,7 +400,8 @@ std::vector<Candidate> searchAngles(const std::vector<TransformModel>& models,
 {
     std::vector<Candidate> candidates;
     for (const TransformModel& model : models) {
-        const cv::Mat response = NccMatcher::match(search, model.image, config.backend);
+        const cv::Mat response = NccMatcher::match(search, model.image, config.backend,
+                                                   &model.nccStats);
         appendModelCandidates(model, search, config, response, candidates);
     }
     return candidates;

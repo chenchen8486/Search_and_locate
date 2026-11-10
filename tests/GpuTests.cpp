@@ -58,6 +58,17 @@ void testGpuCpuEquivalence()
     cv::Mat model;
     search(cv::Rect(37, 29, 16, 12)).copyTo(model);
     compareCpuGpu(model, search, LocatorConfig());
+
+    LocatorConfig gpuConfig;
+    gpuConfig.backend = LocatorBackend::Gpu;
+    const auto prepared = TransformSearch::makeTransformModels(model, gpuConfig);
+    const cv::Mat expected = NccMatcher::match(search, model, LocatorBackend::Gpu);
+    const cv::Mat actual = NccMatcher::match(search, model, LocatorBackend::Gpu,
+                                             &prepared[0].nccStats);
+    expect(actual.size() == expected.size() && actual.type() == expected.type(),
+           "GPU 预备统计响应尺寸或类型错误");
+    expect(cv::norm(actual, expected, cv::NORM_INF) <= 1e-6,
+           "GPU 预备统计与原模板统计的响应误差超过 1e-6");
 }
 
 void testGpuNonContinuousRoi()
@@ -206,6 +217,11 @@ void testGpuUnavailable()
 void testGpuPerformanceBenchmark500()
 {
     runPerformanceBenchmark500(LocatorBackend::Gpu);
+}
+
+void testGpuPersistentPerformance500()
+{
+    runPersistentPerformanceBenchmark(500, LocatorBackend::Gpu);
 }
 
 #ifdef LOCATOR_WITH_CUDA

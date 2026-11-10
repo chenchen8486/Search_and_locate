@@ -20,9 +20,27 @@
 struct BatchReviewData {
     std::vector<ThickPair> pairs;
     BatchDataSet data;
+    std::wstring directory;
+    int requestedCount = 0;
+    LocatorConfig config;
+    LocatorWorkflow::BatchSession session;
 };
 
 namespace {
+
+bool sameConfig(const LocatorConfig& left, const LocatorConfig& right)
+{
+    return left.backend == right.backend && left.useRoi == right.useRoi &&
+           left.roi.x == right.roi.x && left.roi.y == right.roi.y &&
+           left.roi.width == right.roi.width && left.roi.height == right.roi.height &&
+           left.angleMinDeg == right.angleMinDeg && left.angleMaxDeg == right.angleMaxDeg &&
+           left.angleStepDeg == right.angleStepDeg && left.scaleMin == right.scaleMin &&
+           left.scaleMax == right.scaleMax && left.scaleStep == right.scaleStep &&
+           left.pyramidLevels == right.pyramidLevels &&
+           left.subPixelResolution == right.subPixelResolution &&
+           left.minScore == right.minScore && left.maxResults == right.maxResults &&
+           left.xVicinity == right.xVicinity && left.yVicinity == right.yVicinity;
+}
 
 constexpr UINT WM_LOCATOR_SELF_TEST = WM_APP + 202;
 constexpr UINT WM_LOCATOR_SINGLE_COMPLETE = WM_APP + 203;
@@ -1527,6 +1545,7 @@ void CLocatorMfcDlg::OnBatchRun()
     if (batchRunning_ || singleRunning_) {
         return;
     }
+    const std::shared_ptr<BatchReviewData> previous = batchReviewData_;
     clearBatchResultDisplay();
     CString directory;
     GetDlgItemText(IDC_BATCH_PATH, directory);
@@ -1555,6 +1574,8 @@ void CLocatorMfcDlg::OnBatchRun()
     }
     config.useRoi = useRoi_;
     config.roi = roi_;
+    const bool reuse = previous && previous->directory == directory.GetString() &&
+                       previous->requestedCount == count && sameConfig(previous->config, config);
     const std::string path(CT2A(directory.GetString(), CP_ACP));
     const unsigned generation = ++batchGeneration_;
     batchCancelRequested_ = false;
@@ -1563,21 +1584,29 @@ void CLocatorMfcDlg::OnBatchRun()
     setSingleControlsEnabled(false);
     SetDlgItemText(IDC_STATUS_TEXT, L"正在后台准备并执行批量评估");
     try {
-        batchWorker_ = std::thread([this, path, count, threads, config, generation]() {
+        batchWorker_ = std::thread([this, previous, reuse, path, directory, count, threads, config, generation]() {
             BatchCompletion* completion = new BatchCompletion;
             completion->generation = generation;
             try {
-                completion->review = std::make_shared<BatchReviewData>();
-                completion->review->pairs = findThickPairs(path);
-                PostMessage(WM_LOCATOR_DIRECTORY_SCANNED, 0,
-                            static_cast<LPARAM>(completion->review->pairs.size()));
-                const int actualCount = count == 0 ?
-                    static_cast<int>(completion->review->pairs.size()) : count;
-                completion->review->data = makeBenchmarkTasks(completion->review->pairs, actualCount);
-                for (BatchTask& task : completion->review->data.tasks) {
-                    task.config = config;
+                if (reuse) {
+                    completion->review = previous;
+                } else {
+                    completion->review = std::make_shared<BatchReviewData>();
+                    completion->review->pairs = findThickPairs(path);
+                    PostMessage(WM_LOCATOR_DIRECTORY_SCANNED, 0,
+                                static_cast<LPARAM>(completion->review->pairs.size()));
+                    const int actualCount = count == 0 ?
+                        static_cast<int>(completion->review->pairs.size()) : count;
+                    completion->review->data = makeBenchmarkTasks(completion->review->pairs, actualCount);
+                    for (BatchTask& task : completion->review->data.tasks) {
+                        task.config = config;
+                    }
+                    completion->review->directory = directory.GetString();
+                    completion->review->requestedCount = count;
+                    completion->review->config = config;
                 }
-                completion->run = LocatorWorkflow::runBatchControlled(completion->review->data.tasks, threads,
+                completion->run = completion->review->session.run(
+                    completion->review->data.tasks, threads, !reuse,
                     [this](int completed, int total) {
                         BatchProgressData* progress = new BatchProgressData{ completed, total };
                         if (!PostMessage(WM_LOCATOR_BATCH_PROGRESS, 0,
@@ -2723,6 +2752,14 @@ void CLocatorMfcDlg::verifySelfTest(const std::string& directory, const cv::Mat&
             "对话框批量三态统计不正确");
     require(batchPairCount_ == 197 && batchStats_.GetItemCount() == 7,
             "批量目录扫描没有记录实际配对数");
+    const std::shared_ptr<BatchReviewData> firstReview = batchReviewData_;
+    OnBatchRun();
+    waitBatch();
+    require(firstReview && batchReviewData_ == firstReview,
+            "相同目录、任务数和配置的第二次批量没有复用常驻会话");
+    for (const BatchResult& result : batchResultData_) {
+        require(result.preprocessMs == 0.0, "MFC 第二次批量仍执行模板预处理");
+    }
     CString directoryHint;
     GetDlgItemText(IDC_BATCH_SETTINGS_HINT, directoryHint);
     require(directoryHint.Find(L"197") >= 0, "批量目录说明未显示实际配对数");

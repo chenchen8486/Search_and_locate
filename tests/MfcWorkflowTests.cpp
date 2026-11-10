@@ -210,3 +210,68 @@ void testMfcWorkflowSingleExceptions()
         }
     }
 }
+
+void testMfcWorkflowPersistentBatch()
+{
+    const cv::Mat model = makeTexturedImage(12, 10, 18501);
+    cv::Mat firstSearch = makeTexturedImage(64, 52, 18502);
+    cv::Mat secondSearch = makeTexturedImage(64, 52, 18503);
+    model.copyTo(firstSearch(cv::Rect(20, 16, model.cols, model.rows)));
+    model.copyTo(secondSearch(cv::Rect(31, 24, model.cols, model.rows)));
+
+    std::vector<BatchTask> tasks(2);
+    for (size_t i = 0; i < tasks.size(); ++i) {
+        tasks[i].id = static_cast<int>(i);
+        tasks[i].model = asLocatorImage(model);
+        tasks[i].search = asLocatorImage(firstSearch);
+        tasks[i].config.minScore = 99.0;
+        tasks[i].config.subPixelResolution = 4;
+    }
+
+    LocatorWorkflow::BatchSession session;
+    LocatorWorkflow::BatchRun run = session.run(tasks, 2, true);
+    expect(run.results.size() == tasks.size(), "常驻工作流首次执行数量错误");
+    for (const BatchResult& result : run.results) {
+        expect(result.error == LocatorError::Ok && result.matches.size() == 1,
+               "常驻工作流首次执行失败");
+        expectNear(result.matches[0].x, 25.5, 1e-9, "常驻工作流首次 x 错误");
+        expectNear(result.matches[0].y, 20.5, 1e-9, "常驻工作流首次 y 错误");
+    }
+
+    for (BatchTask& task : tasks) {
+        task.search = asLocatorImage(secondSearch);
+    }
+    run = session.run(tasks, 2, false);
+    expect(run.results.size() == tasks.size(), "常驻工作流第二帧数量错误");
+    for (const BatchResult& result : run.results) {
+        expect(result.error == LocatorError::Ok && result.matches.size() == 1 &&
+               result.preprocessMs == 0.0, "第二帧仍执行了模板预处理");
+        expectNear(result.matches[0].x, 36.5, 1e-9, "第二帧 x 错误");
+        expectNear(result.matches[0].y, 28.5, 1e-9, "第二帧 y 错误");
+    }
+
+    const cv::Mat replacementModel = makeTexturedImage(12, 10, 18511);
+    cv::Mat replacementSearch = makeTexturedImage(64, 52, 18512);
+    replacementModel.copyTo(replacementSearch(cv::Rect(8, 7, 12, 10)));
+    for (BatchTask& task : tasks) {
+        task.model = asLocatorImage(replacementModel);
+        task.search = asLocatorImage(replacementSearch);
+    }
+    run = session.run(tasks, 2, true);
+    for (const BatchResult& result : run.results) {
+        expect(result.error == LocatorError::Ok && result.matches.size() == 1,
+               "模板变化后的显式重建失败");
+        expectNear(result.matches[0].x, 13.5, 1e-9, "重建后的 x 错误");
+        expectNear(result.matches[0].y, 11.5, 1e-9, "重建后的 y 错误");
+    }
+
+    std::atomic<bool> cancelled(false);
+    run = session.run(tasks, 1, false,
+        [&cancelled](int, int) { cancelled = true; },
+        [&cancelled]() { return cancelled.load(); });
+    expect(run.cancelled && run.results.size() == 1,
+           "常驻工作流未在任务边界取消");
+    run = session.run(tasks, 1, false);
+    expect(!run.cancelled && run.results.size() == tasks.size(),
+           "取消后的常驻模型没有正常复用");
+}

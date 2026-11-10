@@ -6,8 +6,13 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <utility>
 
 #include <windows.h>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace LocatorWorkflow {
 namespace {
@@ -178,6 +183,99 @@ BatchRun runBatchControlled(const std::vector<BatchTask>& tasks, int threads,
     }
     run.totalMs = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - start).count();
+    return run;
+}
+
+BatchRun BatchSession::run(const std::vector<BatchTask>& tasks, int threads, bool rebuild,
+                           const std::function<void(int, int)>& progress,
+                           const std::function<bool()>& cancel)
+{
+    BatchRun run;
+    run.total = static_cast<int>(tasks.size());
+    const auto totalStart = std::chrono::steady_clock::now();
+    try {
+        const bool initialized = rebuild || locators_.size() != tasks.size();
+        if (initialized) {
+            locators_.clear();
+            locators_.resize(tasks.size());
+            initializationErrors_.assign(tasks.size(), LocatorError::InternalError);
+            preprocessTimes_.assign(tasks.size(), 0.0);
+            for (size_t i = 0; i < tasks.size(); ++i) {
+                const auto start = std::chrono::steady_clock::now();
+                try {
+                    initializationErrors_[i] = locators_[i].initialize(tasks[i].model, tasks[i].config);
+                } catch (...) {
+                    initializationErrors_[i] = LocatorError::InternalError;
+                }
+                preprocessTimes_[i] = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - start).count();
+            }
+        }
+
+        std::vector<BatchResult> results(tasks.size());
+        std::vector<char> finished(tasks.size(), 0);
+        std::atomic<int> completed(0);
+#ifdef _OPENMP
+        const int workers = threads > 0 ? threads : omp_get_max_threads();
+#else
+        const int workers = 1;
+#endif
+        const auto runTask = [&](size_t index) {
+            BatchResult& result = results[index];
+            result.id = tasks[index].id;
+            result.preprocessMs = initialized ? preprocessTimes_[index] : 0.0;
+            result.error = initializationErrors_[index];
+            result.searchMs = 0.0;
+            if (result.error == LocatorError::Ok) {
+                const auto searchStart = std::chrono::steady_clock::now();
+                try {
+                    result.error = locators_[index].execute(tasks[index].search, result.matches);
+                } catch (...) {
+                    result.error = LocatorError::InternalError;
+                    result.matches.clear();
+                }
+                result.searchMs = std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - searchStart).count();
+            }
+            result.totalMs = result.preprocessMs + result.searchMs;
+        };
+
+#ifdef _OPENMP
+#pragma omp parallel for num_threads(workers)
+#endif
+        for (long long index = 0; index < static_cast<long long>(tasks.size()); ++index) {
+            if (cancel && cancel()) {
+                continue;
+            }
+            runTask(static_cast<size_t>(index));
+            finished[index] = 1;
+            if (progress) {
+                progress(completed.fetch_add(1) + 1, static_cast<int>(tasks.size()));
+            }
+        }
+        run.results.reserve(tasks.size());
+        for (size_t i = 0; i < tasks.size(); ++i) {
+            if (finished[i]) {
+                run.results.push_back(std::move(results[i]));
+            }
+        }
+        run.completed = static_cast<int>(run.results.size());
+        run.cancelled = cancel && cancel();
+    } catch (const cv::Exception& error) {
+        run.diagnostic = std::string("OpenCV 异常：") + error.what();
+        run.results.clear();
+        run.completed = 0;
+    } catch (const std::exception& error) {
+        run.diagnostic = error.what();
+        run.results.clear();
+        run.completed = 0;
+    } catch (...) {
+        run.diagnostic = "未知异常";
+        run.results.clear();
+        run.completed = 0;
+    }
+    run.totalMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - totalStart).count();
     return run;
 }
 

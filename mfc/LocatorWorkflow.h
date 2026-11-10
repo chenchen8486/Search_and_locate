@@ -28,6 +28,19 @@ struct BatchRun {
     std::string diagnostic;
 };
 
+class BatchSession {
+public:
+    // rebuild 为 true 或任务数变化时重建模板；false 时调用方保证模板与配置不变。
+    BatchRun run(const std::vector<BatchTask>& tasks, int threads, bool rebuild,
+                 const std::function<void(int, int)>& progress = std::function<void(int, int)>(),
+                 const std::function<bool()>& cancel = std::function<bool()>());
+
+private:
+    std::vector<Locator> locators_;
+    std::vector<LocatorError> initializationErrors_;
+    std::vector<double> preprocessTimes_;
+};
+
 struct BenchmarkRun {
     std::vector<double> warmupMs;
     std::vector<double> roundMs;

@@ -27,6 +27,7 @@ void testMfcWorkflowFixedBenchmark();
 void testMfcWorkflowDirectoryHints();
 void testMfcWorkflowDirectoryRoots();
 void testMfcWorkflowDirectoryMemory();
+void testMfcWorkflowPersistentBatch();
 void testRoiRestrictsSearch();
 void testRoiInvalidRejected();
 void testTopNScoreAndStableOrder();
@@ -55,6 +56,8 @@ void testBatchSerialParallelEquivalent();
 void testRealDataAll197();
 void testPerformanceTaskComposition();
 void testPerformanceBenchmark500();
+void testPerformancePersistent500();
+void testPerformancePersistent600();
 void testGpuAvailability();
 void testGpuCpuEquivalence();
 void testGpuNonContinuousRoi();
@@ -64,6 +67,7 @@ void testGpuParallelEquivalence();
 void testGpuSyntheticFixedSeed100();
 void testGpuRealDataAll197();
 void testGpuPerformanceBenchmark500();
+void testGpuPersistentPerformance500();
 void testGpuBatchResponseEquivalence();
 void exportRealBaseline();
 
@@ -186,6 +190,8 @@ const TestCase tests[] = {
     { "RealData.All197", testRealDataAll197 },
     { "Performance.TaskComposition", testPerformanceTaskComposition },
     { "Performance.Benchmark500", testPerformanceBenchmark500 },
+    { "Performance.Persistent500", testPerformancePersistent500 },
+    { "Performance.Persistent600", testPerformancePersistent600 },
     { "Gpu.Availability", testGpuAvailability },
     { "Gpu.CpuEquivalence", testGpuCpuEquivalence },
     { "Gpu.NonContinuousRoi", testGpuNonContinuousRoi },
@@ -197,6 +203,7 @@ const TestCase tests[] = {
     { "Gpu.ConstantSearchWindow", testGpuConstantSearchWindow },
     { "Gpu.Unavailable", testGpuUnavailable },
     { "Gpu.Performance500", testGpuPerformanceBenchmark500 },
+    { "Gpu.Persistent500", testGpuPersistentPerformance500 },
 #ifdef LOCATOR_WITH_CUDA
     { "Gpu.BatchResponseEquivalence", testGpuBatchResponseEquivalence },
 #endif
@@ -208,7 +215,8 @@ const TestCase tests[] = {
     { "MfcWorkflow.FixedBenchmark", testMfcWorkflowFixedBenchmark },
     { "MfcWorkflow.DirectoryHints", testMfcWorkflowDirectoryHints },
     { "MfcWorkflow.DirectoryRoots", testMfcWorkflowDirectoryRoots },
-    { "MfcWorkflow.DirectoryMemory", testMfcWorkflowDirectoryMemory }
+    { "MfcWorkflow.DirectoryMemory", testMfcWorkflowDirectoryMemory },
+    { "MfcWorkflow.PersistentBatch", testMfcWorkflowPersistentBatch }
 };
 
 bool isCoreTest(const std::string& name)

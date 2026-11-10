@@ -4,6 +4,9 @@
 
 #include <opencv2/core.hpp>
 
+#include <windows.h>
+#include <psapi.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -14,6 +17,22 @@
 #include <sstream>
 #include <string>
 #include <vector>
+
+#pragma comment(lib, "psapi.lib")
+
+namespace {
+
+SIZE_T processWorkingSet()
+{
+    PROCESS_MEMORY_COUNTERS counters = {};
+    counters.cb = sizeof(counters);
+    if (!GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters))) {
+        throw std::runtime_error("无法读取进程工作集");
+    }
+    return counters.WorkingSetSize;
+}
+
+} // namespace
 
 void testBatchOrderAndErrors()
 {
@@ -267,4 +286,91 @@ void runPerformanceBenchmark500(LocatorBackend backend)
 void testPerformanceBenchmark500()
 {
     runPerformanceBenchmark500(LocatorBackend::Cpu);
+}
+
+void runPersistentPerformanceBenchmark(int taskCount, LocatorBackend backend)
+{
+    const std::vector<ThickPair> pairs = findThickPairs(realDataDirectory());
+    BatchDataSet data = makeBenchmarkTasks(pairs, taskCount);
+    std::vector<Locator> locators(data.tasks.size());
+    for (BatchTask& task : data.tasks) {
+        task.config.backend = backend;
+        task.config.subPixelResolution = 4;
+    }
+
+    const SIZE_T workingSetBefore = processWorkingSet();
+    const auto initializeStart = std::chrono::steady_clock::now();
+    for (size_t i = 0; i < data.tasks.size(); ++i) {
+        expect(locators[i].initialize(data.tasks[i].model, data.tasks[i].config) == LocatorError::Ok,
+               "常驻定位核初始化失败，索引 " + std::to_string(i));
+    }
+    const double initializeMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - initializeStart).count();
+    const long long workingSetDelta = static_cast<long long>(processWorkingSet()) -
+                                      static_cast<long long>(workingSetBefore);
+    const double workingSetDeltaMiB = static_cast<double>(workingSetDelta) / (1024.0 * 1024.0);
+
+    std::vector<LocatorError> errors(data.tasks.size());
+    std::vector<std::vector<LocatorResult> > matches(data.tasks.size());
+    std::vector<double> taskTimes(data.tasks.size());
+    const auto executeFrame = [&]() {
+#pragma omp parallel for num_threads(20) schedule(static)
+        for (long long i = 0; i < static_cast<long long>(locators.size()); ++i) {
+            const size_t index = static_cast<size_t>(i);
+            const auto start = std::chrono::steady_clock::now();
+            errors[index] = locators[index].execute(data.tasks[index].search, matches[index]);
+            taskTimes[index] = std::chrono::duration<double, std::milli>(
+                std::chrono::steady_clock::now() - start).count();
+        }
+    };
+    for (int i = 0; i < 5; ++i) {
+        executeFrame();
+    }
+
+    std::vector<double> wallTimes;
+    std::vector<double> allTaskTimes;
+    const std::string rawFile = std::string("temp/t11_persistent_") +
+        (backend == LocatorBackend::Gpu ? "gpu" : "cpu") + std::to_string(taskCount) + ".csv";
+    std::ofstream raw(rawFile);
+    expect(raw.is_open(), "无法保存常驻定位原始计时");
+    raw << "round,wall_ms,mean_execute_ms,p99_ms\n" << std::setprecision(17);
+    for (int round = 0; round < 50; ++round) {
+        const auto start = std::chrono::steady_clock::now();
+        executeFrame();
+        const double wallMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - start).count();
+        wallTimes.push_back(wallMs);
+        double roundTotal = 0.0;
+        std::vector<double> roundTasks = taskTimes;
+        for (size_t i = 0; i < data.tasks.size(); ++i) {
+            expect(errors[i] == LocatorError::Ok && matches[i].size() == 1,
+                   "常驻定位执行失败或空匹配，任务 " + std::to_string(i));
+            roundTotal += taskTimes[i];
+            allTaskTimes.push_back(taskTimes[i]);
+        }
+        std::sort(roundTasks.begin(), roundTasks.end());
+        raw << round << ',' << wallMs << ',' << roundTotal / data.tasks.size() << ','
+            << roundTasks[static_cast<size_t>(std::ceil(roundTasks.size() * 0.99)) - 1] << '\n';
+    }
+    std::sort(wallTimes.begin(), wallTimes.end());
+    std::sort(allTaskTimes.begin(), allTaskTimes.end());
+    const double meanTask = std::accumulate(allTaskTimes.begin(), allTaskTimes.end(), 0.0) /
+                            static_cast<double>(allTaskTimes.size());
+    const double p99 = allTaskTimes[static_cast<size_t>(std::ceil(allTaskTimes.size() * 0.99)) - 1];
+    const double median = wallTimes[wallTimes.size() / 2];
+    std::cout << "常驻后端：" << (backend == LocatorBackend::Gpu ? "GPU" : "CPU")
+              << "，任务数 " << taskCount << "，197 对独立图像，20 线程，预热 5 轮，记录 50 轮。\n"
+              << "建模一次耗时 " << initializeMs << " ms，实时整体中位数 " << median
+              << " ms，单任务执行均值 " << meanTask << " ms，P99 " << p99
+              << " ms，建模工作集增量 " << workingSetDeltaMiB << " MiB。\n";
+}
+
+void testPerformancePersistent500()
+{
+    runPersistentPerformanceBenchmark(500, LocatorBackend::Cpu);
+}
+
+void testPerformancePersistent600()
+{
+    runPersistentPerformanceBenchmark(600, LocatorBackend::Cpu);
 }

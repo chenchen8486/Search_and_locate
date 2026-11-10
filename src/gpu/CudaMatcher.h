@@ -24,6 +24,8 @@ struct BatchInput {
 
 bool isAvailable();
 cv::Mat match(const cv::Mat& search, const cv::Mat& model);
+cv::Mat matchPrepared(const cv::Mat& search, const cv::Mat& model,
+                      float modelMean, float modelVariance);
 std::vector<cv::Mat> matchBatch(const std::vector<BatchInput>& inputs);
 
 } // namespace CudaMatcher

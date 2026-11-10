@@ -1,20 +1,12 @@
 #pragma once
 
 #include "Locator.h"
+#include "NccMatcher.h"
 
 #include <opencv2/core.hpp>
 #include <vector>
 
 namespace TransformSearch {
-
-struct TransformModel {
-    cv::Mat image;
-    double angle;
-    double scale;
-    std::vector<cv::Mat> pyramid;
-};
-
-using Candidate = LocatorResult;
 
 struct SubpixelSample {
     cv::Mat image;
@@ -23,6 +15,17 @@ struct SubpixelSample {
     double offsetX;
     double offsetY;
 };
+
+struct TransformModel {
+    cv::Mat image;
+    double angle;
+    double scale;
+    std::vector<cv::Mat> pyramid;
+    std::vector<SubpixelSample> subpixelSamples;
+    NccMatcher::ModelStats nccStats;
+};
+
+using Candidate = LocatorResult;
 
 std::vector<double> generateAngles(const LocatorConfig& config);
 std::vector<double> generateScales(const LocatorConfig& config);

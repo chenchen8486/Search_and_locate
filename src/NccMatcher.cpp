@@ -11,7 +11,34 @@
 
 namespace NccMatcher {
 
-cv::Mat match(const cv::Mat& search, const cv::Mat& model, LocatorBackend backend)
+ModelStats prepareModelStats(const cv::Mat& model)
+{
+    ModelStats stats;
+    if (model.empty() || model.type() != CV_8UC1) {
+        return stats;
+    }
+    float sum = 0.0f;
+    for (int y = 0; y < model.rows; ++y) {
+        const unsigned char* row = model.ptr<unsigned char>(y);
+        for (int x = 0; x < model.cols; ++x) {
+            sum += row[x];
+        }
+    }
+    const float count = static_cast<float>(model.rows * model.cols);
+    stats.mean = sum / count;
+    for (int y = 0; y < model.rows; ++y) {
+        const unsigned char* row = model.ptr<unsigned char>(y);
+        for (int x = 0; x < model.cols; ++x) {
+            const float value = static_cast<float>(row[x]) - stats.mean;
+            stats.variance += value * value;
+        }
+    }
+    stats.valid = true;
+    return stats;
+}
+
+cv::Mat match(const cv::Mat& search, const cv::Mat& model, LocatorBackend backend,
+              const ModelStats* preparedStats)
 {
     if (search.empty() || model.empty() || search.type() != CV_8UC1 ||
         model.type() != CV_8UC1 || model.cols > search.cols || model.rows > search.rows) {
@@ -26,6 +53,10 @@ cv::Mat match(const cv::Mat& search, const cv::Mat& model, LocatorBackend backen
     }
 #ifdef LOCATOR_WITH_CUDA
     if (backend == LocatorBackend::Gpu) {
+        if (preparedStats != nullptr && preparedStats->valid) {
+            return CudaMatcher::matchPrepared(search, model, preparedStats->mean,
+                                              preparedStats->variance);
+        }
         return CudaMatcher::match(search, model);
     }
 #endif

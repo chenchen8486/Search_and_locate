@@ -11,6 +11,7 @@ namespace {
 
 __global__ void nccKernel(const unsigned char* search, int searchWidth,
                           const unsigned char* model, int modelWidth, int modelHeight,
+                          float preparedMean, float preparedVariance, int usePrepared,
                           float* response, int responseWidth, int responseHeight)
 {
     const int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -24,20 +25,24 @@ __global__ void nccKernel(const unsigned char* search, int searchWidth,
     float searchSum = 0.0f;
     for (int row = 0; row < modelHeight; ++row) {
         for (int col = 0; col < modelWidth; ++col) {
-            modelSum += model[row * modelWidth + col];
+            if (!usePrepared) {
+                modelSum += model[row * modelWidth + col];
+            }
             searchSum += search[(y + row) * searchWidth + x + col];
         }
     }
-    const float modelMean = modelSum / count;
+    const float modelMean = usePrepared ? preparedMean : modelSum / count;
     const float searchMean = searchSum / count;
-    float modelVariance = 0.0f;
+    float modelVariance = usePrepared ? preparedVariance : 0.0f;
     float searchVariance = 0.0f;
     float covariance = 0.0f;
     for (int row = 0; row < modelHeight; ++row) {
         for (int col = 0; col < modelWidth; ++col) {
             const float modelValue = model[row * modelWidth + col] - modelMean;
             const float searchValue = search[(y + row) * searchWidth + x + col] - searchMean;
-            modelVariance += modelValue * modelValue;
+            if (!usePrepared) {
+                modelVariance += modelValue * modelValue;
+            }
             searchVariance += searchValue * searchValue;
             covariance += modelValue * searchValue;
         }
@@ -261,7 +266,8 @@ bool isAvailable()
     return count > 0;
 }
 
-cv::Mat match(const cv::Mat& search, const cv::Mat& model)
+static cv::Mat matchImpl(const cv::Mat& search, const cv::Mat& model,
+                         float preparedMean, float preparedVariance, int usePrepared)
 {
     if (!isAvailable()) {
         throw Unavailable();
@@ -285,6 +291,7 @@ cv::Mat match(const cv::Mat& search, const cv::Mat& model)
     nccKernel<<<grid, block, 0, workspace.stream()>>>(
         static_cast<const unsigned char*>(workspace.search()), search.cols,
         static_cast<const unsigned char*>(workspace.model()), model.cols, model.rows,
+        preparedMean, preparedVariance, usePrepared,
         static_cast<float*>(workspace.response()), responseWidth, responseHeight);
     check(cudaGetLastError());
     check(cudaMemcpyAsync(response.data, workspace.response(),
@@ -292,6 +299,17 @@ cv::Mat match(const cv::Mat& search, const cv::Mat& model)
                           workspace.stream()));
     check(cudaStreamSynchronize(workspace.stream()));
     return response;
+}
+
+cv::Mat match(const cv::Mat& search, const cv::Mat& model)
+{
+    return matchImpl(search, model, 0.0f, 0.0f, 0);
+}
+
+cv::Mat matchPrepared(const cv::Mat& search, const cv::Mat& model,
+                      float modelMean, float modelVariance)
+{
+    return matchImpl(search, model, modelMean, modelVariance, 1);
 }
 
 std::vector<cv::Mat> matchBatch(const std::vector<BatchInput>& inputs)
