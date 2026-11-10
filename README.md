@@ -120,3 +120,11 @@ LocatorError locateOne(const LocatorImage& model, const LocatorImage& search,
 　　连续实时帧优先使用常驻 OpenMP 示例。第 5 章的 `locateOne` 每次调用都会构造 `Locator` 并执行 `initialize`，适合单次调用。N 个定位核反复处理实时帧时，不要逐帧重复执行该函数。
 
 　　三个文件应分别构建，不要加入同一个可执行程序。`BatchExample.cpp` 需要额外编译 `src/BatchLocator.cpp`。`OpenMPLoopExample.cpp` 在未启用 OpenMP 时按串行执行。接口参数和构建细节见 [API 调用手册第 2 章](docs/API调用手册.md#2-快速上手)。
+
+## 8. 作者
+
+　　作者：CHEN.C。
+
+## 9. 许可证
+
+　　本项目为闭源专有项目，版权所有并保留所有权利。未经授权不得使用、复制、修改或分发。完整条款见 [LICENSE](LICENSE)。
