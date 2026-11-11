@@ -606,6 +606,24 @@ void testTransformLinearShift()
     }
 }
 
+void testTransformIntegerCandidates()
+{
+    cv::Mat search = makeTexturedImage(64, 52, 14011);
+    const cv::Mat model = search(cv::Rect(20, 16, 16, 12)).clone();
+    LocatorConfig config;
+    config.subPixelResolution = 4;
+    config.minScore = 80.0;
+    const std::vector<TransformSearch::TransformModel> models =
+        TransformSearch::makeTransformModels(model, config);
+    const cv::Mat response = NccMatcher::match(search, model);
+    std::vector<TransformSearch::Candidate> candidates;
+    TransformSearch::appendIntegerCandidates(models[0], config, response, candidates);
+    expect(candidates.size() == 1, "整数候选提取应返回一个最佳位置");
+    expectNear(candidates[0].x, 27.5, 1e-9, "整数候选 x 错误");
+    expectNear(candidates[0].y, 21.5, 1e-9, "整数候选 y 错误");
+    expect(candidates[0].score > 99.9, "整数候选分数错误");
+}
+
 void testNccConstantSearchWindow()
 {
     const cv::Mat model = makeTexturedImage(12, 10, 17001);
@@ -664,6 +682,111 @@ void testPyramidCoarseOrderReversal()
                "粗层错误候选不得覆盖原图更优目标，实际 x=" + std::to_string(results[0].x));
     expectNear(results[0].y, 21.5, 1e-9,
                "粗层错误候选不得覆盖原图更优目标，实际 y=" + std::to_string(results[0].y));
+}
+
+void testPyramidCoarseVicinityScale()
+{
+    const cv::Mat model = makeTexturedImage(48, 48, 19110);
+    const cv::Mat search = makeTexturedImage(128, 128, 19111);
+    LocatorConfig config;
+    config.pyramidLevels = 2;
+    config.subPixelResolution = 1;
+    config.maxResults = 2;
+    std::vector<TransformSearch::TransformModel> models =
+        TransformSearch::makeTransformModels(model, config);
+    for (TransformSearch::TransformModel& transformed : models) {
+        transformed.pyramid = PyramidSearch::buildPyramids(transformed.image, 2);
+    }
+    const std::vector<cv::Mat> searchLevels = PyramidSearch::buildPyramids(search, 2);
+    PyramidSearch::SearchStats stats;
+    const std::vector<TransformSearch::Candidate> candidates =
+        PyramidSearch::searchPyramid(models, searchLevels, config, &stats);
+    expect(!candidates.empty(), "邻域尺度测试应产生候选");
+    expect(stats.refinedWindows > 16,
+           "多目标金字塔不得受 Top-1 的 16 个粗候选上限影响");
+    expect(stats.refinedWindows <= 441,
+           "2 层粗响应的相邻位置必须合并，精化窗口数实际为 " +
+           std::to_string(stats.refinedWindows));
+}
+
+void testPyramidCandidateBudget()
+{
+    const cv::Mat model = makeTexturedImage(48, 48, 19130);
+    const cv::Mat search = makeTexturedImage(300, 300, 19131);
+    LocatorConfig config;
+    config.pyramidLevels = 2;
+    config.subPixelResolution = 1;
+    std::vector<TransformSearch::TransformModel> models =
+        TransformSearch::makeTransformModels(model, config);
+    for (TransformSearch::TransformModel& transformed : models) {
+        transformed.pyramid = PyramidSearch::buildPyramids(transformed.image, 2);
+    }
+    const std::vector<cv::Mat> searchLevels = PyramidSearch::buildPyramids(search, 2);
+    PyramidSearch::SearchStats stats;
+    PyramidSearch::searchPyramid(models, searchLevels, config, &stats);
+    expect(stats.refinedWindows > 0 && stats.refinedWindows <= 16,
+           "Top-1 粗候选精化预算应不超过 16，实际为 " +
+           std::to_string(stats.refinedWindows));
+}
+
+void testPyramidSubpixelAfterGlobalFilter()
+{
+    const cv::Mat model = makeTexturedImage(48, 48, 19120);
+    const cv::Mat search = makeTexturedImage(118, 118, 19121);
+    model.copyTo(search(cv::Rect(30, 36, model.cols, model.rows)));
+    LocatorConfig config;
+    config.pyramidLevels = 2;
+    config.subPixelResolution = 4;
+    std::vector<TransformSearch::TransformModel> models =
+        TransformSearch::makeTransformModels(model, config);
+    for (TransformSearch::TransformModel& transformed : models) {
+        transformed.pyramid = PyramidSearch::buildPyramids(transformed.image, 2);
+    }
+    const std::vector<cv::Mat> searchLevels = PyramidSearch::buildPyramids(search, 2);
+    PyramidSearch::SearchStats stats;
+    const std::vector<TransformSearch::Candidate> candidates =
+        PyramidSearch::searchPyramid(models, searchLevels, config, &stats);
+    expect(stats.fullImageRefinements == 1,
+           "Top-1 金字塔应只在全局预筛后执行一次请求档位的原图复核");
+    const std::vector<LocatorResult> actual = ResultRefiner::selectResults(candidates, config);
+    LocatorConfig singleConfig = config;
+    singleConfig.pyramidLevels = 1;
+    Locator single;
+    expect(single.initialize(asLocatorImage(model), singleConfig) == LocatorError::Ok,
+           "单层对照初始化失败");
+    std::vector<LocatorResult> expected;
+    expect(single.execute(asLocatorImage(search), expected) == LocatorError::Ok,
+           "单层对照搜索失败");
+    expect(actual.size() == 1 && expected.size() == 1, "金字塔及单层均应返回一个结果");
+    expectNear(actual[0].x, expected[0].x, 1e-9, "亚像素后置后的 x 与单层不一致");
+    expectNear(actual[0].y, expected[0].y, 1e-9, "亚像素后置后的 y 与单层不一致");
+    expectNear(actual[0].score, expected[0].score, 1e-9, "亚像素后置后的分数与单层不一致");
+}
+
+void testPyramidSmallSingleModelDirect()
+{
+    cv::Mat search = makeTexturedImage(118, 118, 19140);
+    const cv::Mat model = makeTexturedImage(48, 48, 19141);
+    model.copyTo(search(cv::Rect(30, 36, model.cols, model.rows)));
+    LocatorConfig config;
+    config.pyramidLevels = 2;
+    config.subPixelResolution = 4;
+    std::vector<TransformSearch::TransformModel> models =
+        TransformSearch::makeTransformModels(model, config);
+    for (TransformSearch::TransformModel& transformed : models) {
+        transformed.pyramid = PyramidSearch::buildPyramids(transformed.image, 2);
+    }
+    const std::vector<cv::Mat> searchLevels = PyramidSearch::buildPyramids(search, 2);
+    PyramidSearch::SearchStats stats;
+    const std::vector<TransformSearch::Candidate> candidates =
+        PyramidSearch::searchPyramid(models, searchLevels, config, &stats);
+    expect(stats.refinedWindows == 0 && stats.fullImageRefinements == 1,
+           "小图单模型 Top-1 应直接执行一次原图精化，避免重复局部窗口");
+    const std::vector<LocatorResult> results = ResultRefiner::selectResults(candidates, config);
+    expect(results.size() == 1, "小图直接精化应返回一个结果");
+    expectNear(results[0].x, 53.5, 1e-9, "小图直接精化 x 错误");
+    expectNear(results[0].y, 59.5, 1e-9, "小图直接精化 y 错误");
+    expect(results[0].score > 99.9, "小图直接精化分数错误");
 }
 
 void testScaleShrunkModelFits()

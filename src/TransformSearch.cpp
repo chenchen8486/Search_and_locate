@@ -306,6 +306,58 @@ std::vector<double> scoreSubpixelSamples(const cv::Mat& patch,
     return scores;
 }
 
+void appendIntegerCandidates(const TransformModel& model, const LocatorConfig& config,
+                             const cv::Mat& response, std::vector<Candidate>& candidates)
+{
+    std::vector<Candidate> localMaxima;
+    for (int y = 0; y < response.rows; ++y) {
+        for (int x = 0; x < response.cols; ++x) {
+            const float value = response.at<float>(y, x);
+            if (!std::isfinite(value)) {
+                continue;
+            }
+            bool localMaximum = true;
+            for (int neighborY = std::max(0, y - 1);
+                 neighborY <= std::min(response.rows - 1, y + 1); ++neighborY) {
+                for (int neighborX = std::max(0, x - 1);
+                     neighborX <= std::min(response.cols - 1, x + 1); ++neighborX) {
+                    if (response.at<float>(neighborY, neighborX) > value) {
+                        localMaximum = false;
+                        break;
+                    }
+                }
+                if (!localMaximum) {
+                    break;
+                }
+            }
+            const double score = std::max(0.0, static_cast<double>(value)) * 100.0;
+            if (localMaximum && score >= config.minScore) {
+                localMaxima.push_back({ static_cast<double>(x), static_cast<double>(y),
+                                        model.angle, model.scale, score });
+            }
+        }
+    }
+    localMaxima = ResultRefiner::selectResults(localMaxima, config);
+    for (const Candidate& candidate : localMaxima) {
+        candidates.push_back({ candidate.x + (model.image.cols - 1) / 2.0,
+                               candidate.y + (model.image.rows - 1) / 2.0,
+                               candidate.angle, candidate.scale, candidate.score });
+    }
+}
+
+std::vector<Candidate> searchIntegerAngles(const std::vector<TransformModel>& models,
+                                           const cv::Mat& search,
+                                           const LocatorConfig& config)
+{
+    std::vector<Candidate> candidates;
+    for (const TransformModel& model : models) {
+        const cv::Mat response = NccMatcher::match(search, model.image, config.backend,
+                                                   &model.nccStats);
+        appendIntegerCandidates(model, config, response, candidates);
+    }
+    return candidates;
+}
+
 void appendModelCandidates(const TransformModel& model, const cv::Mat& search,
                            const LocatorConfig& config, const cv::Mat& response,
                            std::vector<Candidate>& candidates)

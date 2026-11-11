@@ -288,14 +288,17 @@ void testPerformanceBenchmark500()
     runPerformanceBenchmark500(LocatorBackend::Cpu);
 }
 
-void runPersistentPerformanceBenchmark(int taskCount, LocatorBackend backend)
+void runPersistentPerformanceBenchmark(int taskCount, LocatorBackend backend,
+                                       int pyramidLevels, int subPixelResolution,
+                                       int warmupRounds, int measuredRounds)
 {
     const std::vector<ThickPair> pairs = findThickPairs(realDataDirectory());
     BatchDataSet data = makeBenchmarkTasks(pairs, taskCount);
     std::vector<Locator> locators(data.tasks.size());
     for (BatchTask& task : data.tasks) {
         task.config.backend = backend;
-        task.config.subPixelResolution = 4;
+        task.config.pyramidLevels = pyramidLevels;
+        task.config.subPixelResolution = subPixelResolution;
     }
 
     const SIZE_T workingSetBefore = processWorkingSet();
@@ -323,18 +326,24 @@ void runPersistentPerformanceBenchmark(int taskCount, LocatorBackend backend)
                 std::chrono::steady_clock::now() - start).count();
         }
     };
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < warmupRounds; ++i) {
         executeFrame();
     }
 
     std::vector<double> wallTimes;
     std::vector<double> allTaskTimes;
+    const std::string pyramidSuffix = pyramidLevels == 1 ? std::string() :
+        "_pyramid" + std::to_string(pyramidLevels);
+    const std::string subpixelSuffix = subPixelResolution == 4 ? std::string() :
+        "_subpixel" + std::to_string(subPixelResolution);
+    const std::string roundSuffix = measuredRounds == 50 ? std::string() : "_dev";
     const std::string rawFile = std::string("temp/t11_persistent_") +
-        (backend == LocatorBackend::Gpu ? "gpu" : "cpu") + std::to_string(taskCount) + ".csv";
+        (backend == LocatorBackend::Gpu ? "gpu" : "cpu") + std::to_string(taskCount) +
+        pyramidSuffix + subpixelSuffix + roundSuffix + ".csv";
     std::ofstream raw(rawFile);
     expect(raw.is_open(), "无法保存常驻定位原始计时");
     raw << "round,wall_ms,mean_execute_ms,p99_ms\n" << std::setprecision(17);
-    for (int round = 0; round < 50; ++round) {
+    for (int round = 0; round < measuredRounds; ++round) {
         const auto start = std::chrono::steady_clock::now();
         executeFrame();
         const double wallMs = std::chrono::duration<double, std::milli>(
@@ -359,7 +368,9 @@ void runPersistentPerformanceBenchmark(int taskCount, LocatorBackend backend)
     const double p99 = allTaskTimes[static_cast<size_t>(std::ceil(allTaskTimes.size() * 0.99)) - 1];
     const double median = wallTimes[wallTimes.size() / 2];
     std::cout << "常驻后端：" << (backend == LocatorBackend::Gpu ? "GPU" : "CPU")
-              << "，任务数 " << taskCount << "，197 对独立图像，20 线程，预热 5 轮，记录 50 轮。\n"
+              << "，任务数 " << taskCount << "，金字塔 " << pyramidLevels
+              << "，亚像素 " << subPixelResolution << "，197 对独立图像，20 线程，预热 "
+              << warmupRounds << " 轮，记录 " << measuredRounds << " 轮。\n"
               << "建模一次耗时 " << initializeMs << " ms，实时整体中位数 " << median
               << " ms，单任务执行均值 " << meanTask << " ms，P99 " << p99
               << " ms，建模工作集增量 " << workingSetDeltaMiB << " MiB。\n";
@@ -367,10 +378,20 @@ void runPersistentPerformanceBenchmark(int taskCount, LocatorBackend backend)
 
 void testPerformancePersistent500()
 {
-    runPersistentPerformanceBenchmark(500, LocatorBackend::Cpu);
+    runPersistentPerformanceBenchmark(500, LocatorBackend::Cpu, 1, 4);
+}
+
+void testPerformancePersistent500SubPixel1()
+{
+    runPersistentPerformanceBenchmark(500, LocatorBackend::Cpu, 1, 1);
+}
+
+void testPerformancePersistent500Pyramid2()
+{
+    runPersistentPerformanceBenchmark(500, LocatorBackend::Cpu, 2, 4, 5, 50);
 }
 
 void testPerformancePersistent600()
 {
-    runPersistentPerformanceBenchmark(600, LocatorBackend::Cpu);
+    runPersistentPerformanceBenchmark(600, LocatorBackend::Cpu, 1, 4);
 }

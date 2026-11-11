@@ -3,6 +3,7 @@
 #include "gpu/CudaMatcher.h"
 #include "Locator.h"
 #include "NccMatcher.h"
+#include "PyramidSearch.h"
 #include "TestSupport.h"
 #include "TransformSearch.h"
 
@@ -221,10 +222,45 @@ void testGpuPerformanceBenchmark500()
 
 void testGpuPersistentPerformance500()
 {
-    runPersistentPerformanceBenchmark(500, LocatorBackend::Gpu);
+    runPersistentPerformanceBenchmark(500, LocatorBackend::Gpu, 1, 4);
+}
+
+void testGpuPersistentPerformance500SubPixel1()
+{
+    runPersistentPerformanceBenchmark(500, LocatorBackend::Gpu, 1, 1);
+}
+
+void testGpuPersistentPerformance500Pyramid2()
+{
+    runPersistentPerformanceBenchmark(500, LocatorBackend::Gpu, 2, 4, 5, 50);
 }
 
 #ifdef LOCATOR_WITH_CUDA
+void testGpuPyramidBatchEquivalence()
+{
+    const cv::Mat model = makeTexturedImage(24, 24, 16610);
+    cv::Mat search = makeTexturedImage(300, 300, 16611);
+    model.copyTo(search(cv::Rect(80, 60, model.cols, model.rows)));
+    LocatorConfig config;
+    config.pyramidLevels = 2;
+    config.subPixelResolution = 4;
+    compareCpuGpu(model, search, config);
+
+    LocatorConfig gpuConfig = config;
+    gpuConfig.backend = LocatorBackend::Gpu;
+    std::vector<TransformSearch::TransformModel> models =
+        TransformSearch::makeTransformModels(model, gpuConfig);
+    for (TransformSearch::TransformModel& transformed : models) {
+        transformed.pyramid = PyramidSearch::buildPyramids(transformed.image, 2);
+    }
+    const std::vector<cv::Mat> searchLevels = PyramidSearch::buildPyramids(search, 2);
+    PyramidSearch::SearchStats stats;
+    PyramidSearch::searchPyramid(models, searchLevels, gpuConfig, &stats);
+    expect(stats.refinedWindows > 0 && stats.gpuBatchCalls > 0 &&
+           stats.gpuBatchCalls < stats.refinedWindows,
+           "GPU 金字塔精化必须批量执行窗口，而不是逐窗口传输和同步");
+}
+
 void testGpuBatchResponseEquivalence()
 {
     std::vector<cv::Mat> owned;

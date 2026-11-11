@@ -41,9 +41,14 @@ void testScaleSequence();
 void testScaleRecoverKnownScale();
 void testScaleShrunkModelFits();
 void testPyramidCoarseOrderReversal();
+void testPyramidCoarseVicinityScale();
+void testPyramidCandidateBudget();
+void testPyramidSubpixelAfterGlobalFilter();
+void testPyramidSmallSingleModelDirect();
 void testTransformCombinedSearch();
 void testTransformInvalidBounds();
 void testTransformLinearShift();
+void testTransformIntegerCandidates();
 void testPyramidInvalidLevel();
 void testPyramidEquivalentResult();
 void testPyramidKeepsRequestedRange();
@@ -57,6 +62,8 @@ void testRealDataAll197();
 void testPerformanceTaskComposition();
 void testPerformanceBenchmark500();
 void testPerformancePersistent500();
+void testPerformancePersistent500SubPixel1();
+void testPerformancePersistent500Pyramid2();
 void testPerformancePersistent600();
 void testGpuAvailability();
 void testGpuCpuEquivalence();
@@ -68,7 +75,10 @@ void testGpuSyntheticFixedSeed100();
 void testGpuRealDataAll197();
 void testGpuPerformanceBenchmark500();
 void testGpuPersistentPerformance500();
+void testGpuPersistentPerformance500SubPixel1();
+void testGpuPersistentPerformance500Pyramid2();
 void testGpuBatchResponseEquivalence();
+void testGpuPyramidBatchEquivalence();
 void exportRealBaseline();
 
 namespace {
@@ -177,9 +187,14 @@ const TestCase tests[] = {
     { "Transform.CombinedSearch", testTransformCombinedSearch },
     { "Transform.InvalidBounds", testTransformInvalidBounds },
     { "Transform.LinearShift", testTransformLinearShift },
+    { "Transform.IntegerCandidates", testTransformIntegerCandidates },
     { "Pyramid.InvalidLevel", testPyramidInvalidLevel },
     { "Pyramid.EquivalentResult", testPyramidEquivalentResult },
     { "Pyramid.CoarseOrderReversal", testPyramidCoarseOrderReversal },
+    { "Pyramid.CoarseVicinityScale", testPyramidCoarseVicinityScale },
+    { "Pyramid.CandidateBudget", testPyramidCandidateBudget },
+    { "Pyramid.SubpixelAfterGlobalFilter", testPyramidSubpixelAfterGlobalFilter },
+    { "Pyramid.SmallSingleModelDirect", testPyramidSmallSingleModelDirect },
     { "Pyramid.KeepsRequestedRange", testPyramidKeepsRequestedRange },
     { "SubPixel.KnownShift", testSubPixelKnownShift },
     { "SubPixel.BorderFallback", testSubPixelBorderFallback },
@@ -191,6 +206,8 @@ const TestCase tests[] = {
     { "Performance.TaskComposition", testPerformanceTaskComposition },
     { "Performance.Benchmark500", testPerformanceBenchmark500 },
     { "Performance.Persistent500", testPerformancePersistent500 },
+    { "Performance.Persistent500SubPixel1", testPerformancePersistent500SubPixel1 },
+    { "Performance.Persistent500Pyramid2", testPerformancePersistent500Pyramid2 },
     { "Performance.Persistent600", testPerformancePersistent600 },
     { "Gpu.Availability", testGpuAvailability },
     { "Gpu.CpuEquivalence", testGpuCpuEquivalence },
@@ -204,8 +221,11 @@ const TestCase tests[] = {
     { "Gpu.Unavailable", testGpuUnavailable },
     { "Gpu.Performance500", testGpuPerformanceBenchmark500 },
     { "Gpu.Persistent500", testGpuPersistentPerformance500 },
+    { "Gpu.Persistent500SubPixel1", testGpuPersistentPerformance500SubPixel1 },
+    { "Gpu.Persistent500Pyramid2", testGpuPersistentPerformance500Pyramid2 },
 #ifdef LOCATOR_WITH_CUDA
     { "Gpu.BatchResponseEquivalence", testGpuBatchResponseEquivalence },
+    { "Gpu.PyramidBatchEquivalence", testGpuPyramidBatchEquivalence },
 #endif
     { "MfcWorkflow.SingleSearch", testMfcWorkflowSingleSearch },
     { "MfcWorkflow.SingleExceptions", testMfcWorkflowSingleExceptions },

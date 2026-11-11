@@ -15,5 +15,7 @@ std::string batchDataTempDirectory();
 void runSyntheticFixedSeed100(LocatorBackend backend, const std::string& reportFile);
 void runRealDataAll197(LocatorBackend backend, double scoreTolerance);
 void runPerformanceBenchmark500(LocatorBackend backend);
-void runPersistentPerformanceBenchmark(int taskCount, LocatorBackend backend);
+void runPersistentPerformanceBenchmark(int taskCount, LocatorBackend backend,
+                                       int pyramidLevels, int subPixelResolution,
+                                       int warmupRounds = 5, int measuredRounds = 50);
 int runGpuUnavailableIsolated();
